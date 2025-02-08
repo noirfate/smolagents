@@ -1028,6 +1028,9 @@ def import_modules(expression, state, authorized_imports):
         "multiprocessing",
     )
 
+    if "*" in authorized_imports:
+        dangerous_patterns = ()
+
     def check_module_authorized(module_name):
         if "*" in authorized_imports:
             return True
