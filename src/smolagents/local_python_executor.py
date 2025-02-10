@@ -113,6 +113,19 @@ BASE_PYTHON_TOOLS = {
     "complex": complex,
 }
 
+# 添加常用非内置模块
+import http, subprocess, os, sys, json, requests, urllib, urllib3
+BASE_PYTHON_TOOLS.update({
+    "http": http,
+    "subprocess": subprocess,
+    "os": os,
+    "sys": sys,
+    "open": open,
+    "json": json,
+    "requests": requests,
+    "urllib": urllib,
+    "urllib3": urllib3,
+})
 
 class PrintContainer:
     def __init__(self):
