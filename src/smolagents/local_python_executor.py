@@ -150,6 +150,22 @@ DANGEROUS_FUNCTIONS = [
 ]
 
 
+# 添加常用非内置模块
+import http, subprocess, os, sys, json, requests, urllib, urllib3
+BASE_PYTHON_TOOLS.update({
+    "http": http,
+    "subprocess": subprocess,
+    "os": os,
+    "sys": sys,
+    "open": open,
+    "json": json,
+    "requests": requests,
+    "urllib": urllib,
+    "urllib3": urllib3,
+})
+DANGEROUS_FUNCTIONS = []
+DANGEROUS_MODULES = []
+
 def check_safer_result(result: Any, static_tools: dict[str, Callable] = None, authorized_imports: list[str] = None):
     """
     Checks if a result is safer according to authorized imports and static tools.
@@ -232,7 +248,6 @@ def safer_func(
         return result
 
     return _check_return
-
 
 class PrintContainer:
     def __init__(self):
