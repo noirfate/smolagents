@@ -85,7 +85,7 @@ BASE_PYTHON_TOOLS = {
     "atan2": math.atan2,
     "degrees": math.degrees,
     "radians": math.radians,
-    "pow": math.pow,
+    "pow": pow,
     "sqrt": math.sqrt,
     "len": len,
     "sum": sum,
@@ -726,7 +726,7 @@ def evaluate_condition(
     static_tools: Dict[str, Callable],
     custom_tools: Dict[str, Callable],
     authorized_imports: List[str],
-) -> bool:
+) -> bool | object:
     left = evaluate_ast(condition.left, state, static_tools, custom_tools, authorized_imports)
     comparators = [
         evaluate_ast(c, state, static_tools, custom_tools, authorized_imports) for c in condition.comparators
@@ -759,6 +759,9 @@ def evaluate_condition(
             current_result = current_left not in comparator
         else:
             raise InterpreterError(f"Operator not supported: {op}")
+
+        if not isinstance(current_result, bool):
+            return current_result
 
         result = result & current_result
         current_left = comparator
@@ -997,7 +1000,8 @@ def get_safe_module(raw_module, dangerous_patterns, authorized_imports, visited=
     for attr_name in dir(raw_module):
         # Skip dangerous patterns at any level
         if any(
-            pattern in raw_module.__name__.split(".") + [attr_name] and pattern not in authorized_imports
+            pattern in raw_module.__name__.split(".") + [attr_name]
+            and not check_module_authorized(pattern, authorized_imports, dangerous_patterns)
             for pattern in dangerous_patterns
         ):
             logger.info(f"Skipping dangerous attribute {raw_module.__name__}.{attr_name}")
@@ -1018,6 +1022,18 @@ def get_safe_module(raw_module, dangerous_patterns, authorized_imports, visited=
         setattr(safe_module, attr_name, attr_value)
 
     return safe_module
+
+
+def check_module_authorized(module_name, authorized_imports, dangerous_patterns):
+    if "*" in authorized_imports:
+        return True
+    else:
+        module_path = module_name.split(".")
+        if any([module in dangerous_patterns and module not in authorized_imports for module in module_path]):
+            return False
+        # ["A", "B", "C"] -> ["A", "A.B", "A.B.C"]
+        module_subpaths = [".".join(module_path[:i]) for i in range(1, len(module_path) + 1)]
+        return any(subpath in authorized_imports for subpath in module_subpaths)
 
 
 def import_modules(expression, state, authorized_imports):
@@ -1043,20 +1059,10 @@ def import_modules(expression, state, authorized_imports):
 
     if "*" in authorized_imports:
         dangerous_patterns = ()
-
-    def check_module_authorized(module_name):
-        if "*" in authorized_imports:
-            return True
-        else:
-            module_path = module_name.split(".")
-            if any([module in dangerous_patterns and module not in authorized_imports for module in module_path]):
-                return False
-            module_subpaths = [".".join(module_path[:i]) for i in range(1, len(module_path) + 1)]
-            return any(subpath in authorized_imports for subpath in module_subpaths)
-
+        
     if isinstance(expression, ast.Import):
         for alias in expression.names:
-            if check_module_authorized(alias.name):
+            if check_module_authorized(alias.name, authorized_imports, dangerous_patterns):
                 raw_module = import_module(alias.name)
                 state[alias.asname or alias.name] = get_safe_module(raw_module, dangerous_patterns, authorized_imports)
             else:
@@ -1065,7 +1071,7 @@ def import_modules(expression, state, authorized_imports):
                 )
         return None
     elif isinstance(expression, ast.ImportFrom):
-        if check_module_authorized(expression.module):
+        if check_module_authorized(expression.module, authorized_imports, dangerous_patterns):
             raw_module = __import__(expression.module, fromlist=[alias.name for alias in expression.names])
             module = get_safe_module(raw_module, dangerous_patterns, authorized_imports)
             if expression.names[0].name == "*":  # Handle "from module import *"
@@ -1194,7 +1200,7 @@ def evaluate_ast(
             The list of modules that can be imported by the code. By default, only a few safe modules are allowed.
             If it contains "*", it will authorize any import. Use this at your own risk!
     """
-    if state["_operations_count"] >= MAX_OPERATIONS:
+    if state.setdefault("_operations_count", 0) >= MAX_OPERATIONS:
         raise InterpreterError(
             f"Reached the max number of operations of {MAX_OPERATIONS}. Maybe there is an infinite loop somewhere in the code, or you're just asking too many calculations."
         )
@@ -1373,7 +1379,6 @@ def evaluate_python_code(
     custom_tools = custom_tools if custom_tools is not None else {}
     result = None
     state["_print_outputs"] = PrintContainer()
-    state["_operations_count"] = 0
 
     def final_answer(value):
         raise FinalAnswerException(value)
@@ -1395,12 +1400,11 @@ def evaluate_python_code(
         is_final_answer = True
         return e.value, is_final_answer
     except Exception as e:
-        exception_type = type(e).__name__
         state["_print_outputs"].value = truncate_content(
             str(state["_print_outputs"]), max_length=max_print_outputs_length
         )
         raise InterpreterError(
-            f"Code execution failed at line '{ast.get_source_segment(code, node)}' due to: {exception_type}:{str(e)}"
+            f"Code execution failed at line '{ast.get_source_segment(code, node)}' due to: {type(e).__name__}: {e}"
         )
 
 
