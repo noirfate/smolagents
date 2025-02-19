@@ -221,7 +221,7 @@ class Tool:
 
             class {class_name}(Tool):
                 name = "{self.name}"
-                description = "{self.description}"
+                description = {json.dumps(textwrap.dedent(self.description).strip())}
                 inputs = {json.dumps(self.inputs, separators=(",", ":"))}
                 output_type = "{self.output_type}"
             """
@@ -406,7 +406,6 @@ class Tool:
             repo_type="space",
             cache_dir=kwargs.get("cache_dir"),
             force_download=kwargs.get("force_download"),
-            resume_download=kwargs.get("resume_download"),
             proxies=kwargs.get("proxies"),
             revision=kwargs.get("revision"),
             subfolder=kwargs.get("subfolder"),
