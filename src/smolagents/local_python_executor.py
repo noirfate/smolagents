@@ -1008,14 +1008,15 @@ def get_safe_module(raw_module, authorized_imports, visited=None):
 
     # Copy all attributes by reference, recursively checking modules
     for attr_name in dir(raw_module):
-        # Skip dangerous patterns at any level
-        if any(
-            pattern in raw_module.__name__.split(".") + [attr_name]
-            and not check_module_authorized(pattern, authorized_imports)
-            for pattern in DANGEROUS_PATTERNS
-        ):
-            logger.info(f"Skipping dangerous attribute {raw_module.__name__}.{attr_name}")
-            continue
+        if "*" not in authorized_imports:
+            # Skip dangerous patterns at any level
+            if any(
+                pattern in raw_module.__name__.split(".") + [attr_name]
+                and not check_module_authorized(pattern, authorized_imports)
+                for pattern in DANGEROUS_PATTERNS
+            ):
+                logger.info(f"Skipping dangerous attribute {raw_module.__name__}.{attr_name}")
+                continue
 
         try:
             attr_value = getattr(raw_module, attr_name)
