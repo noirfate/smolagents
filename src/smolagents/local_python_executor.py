@@ -33,9 +33,10 @@ from typing import Any
 from .tools import Tool
 from .utils import BASE_BUILTIN_MODULES, truncate_content
 
+import warnings
 
 logger = logging.getLogger(__name__)
-
+warnings.filterwarnings('ignore')
 
 class InterpreterError(ValueError):
     """
