@@ -21,6 +21,7 @@ import inspect
 import logging
 import math
 import re
+import warnings
 from collections.abc import Mapping
 from importlib import import_module
 from types import ModuleType
@@ -33,7 +34,7 @@ from .utils import BASE_BUILTIN_MODULES, truncate_content
 
 
 logger = logging.getLogger(__name__)
-
+warnings.filterwarnings('ignore')
 
 class InterpreterError(ValueError):
     """
