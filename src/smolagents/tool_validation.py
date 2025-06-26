@@ -1,9 +1,8 @@
 import ast
 import builtins
 from itertools import zip_longest
-from typing import Set
 
-from .utils import BASE_BUILTIN_MODULES, get_source
+from .utils import BASE_BUILTIN_MODULES, get_source, is_valid_name
 
 
 _BUILTIN_NAMES = set(vars(builtins))
@@ -16,7 +15,7 @@ class MethodChecker(ast.NodeVisitor):
     - contains no local imports (e.g. numpy is ok but local_script is not)
     """
 
-    def __init__(self, class_attributes: Set[str], check_imports: bool = True):
+    def __init__(self, class_attributes: set[str], check_imports: bool = True):
         self.undefined_names = set()
         self.imports = {}
         self.from_imports = {}
@@ -26,6 +25,7 @@ class MethodChecker(ast.NodeVisitor):
         self.errors = []
         self.check_imports = check_imports
         self.typing_names = {"Any"}
+        self.defined_classes = set()
 
     def visit_arguments(self, node):
         """Collect function arguments"""
@@ -50,6 +50,10 @@ class MethodChecker(ast.NodeVisitor):
         for target in node.targets:
             if isinstance(target, ast.Name):
                 self.assigned_names.add(target.id)
+            elif isinstance(target, (ast.Tuple, ast.List)):
+                for elt in target.elts:
+                    if isinstance(elt, ast.Name):
+                        self.assigned_names.add(elt.id)
         self.visit(node.value)
 
     def visit_With(self, node):
@@ -112,6 +116,11 @@ class MethodChecker(ast.NodeVisitor):
         if not (isinstance(node.value, ast.Name) and node.value.id == "self"):
             self.generic_visit(node)
 
+    def visit_ClassDef(self, node):
+        """Track class definitions"""
+        self.defined_classes.add(node.name)
+        self.generic_visit(node)
+
     def visit_Name(self, node):
         if isinstance(node.ctx, ast.Load):
             if not (
@@ -124,6 +133,7 @@ class MethodChecker(ast.NodeVisitor):
                 or node.id in self.from_imports
                 or node.id in self.assigned_names
                 or node.id in self.typing_names
+                or node.id in self.defined_classes
             ):
                 self.errors.append(f"Name '{node.id}' is undefined.")
 
@@ -138,6 +148,7 @@ class MethodChecker(ast.NodeVisitor):
                 or node.func.id in self.imports
                 or node.func.id in self.from_imports
                 or node.func.id in self.assigned_names
+                or node.func.id in self.defined_classes
             ):
                 self.errors.append(f"Name '{node.func.id}' is undefined.")
         self.generic_visit(node)
@@ -166,6 +177,7 @@ def validate_tool_attributes(cls, check_imports: bool = True) -> None:
             self.non_defaults = set()
             self.non_literal_defaults = set()
             self.in_method = False
+            self.invalid_attributes = []
 
         def visit_FunctionDef(self, node):
             if node.name == "__init__":
@@ -192,6 +204,19 @@ def validate_tool_attributes(cls, check_imports: bool = True) -> None:
                     if isinstance(target, ast.Name):
                         self.complex_attributes.add(target.id)
 
+            # Check specific class attributes
+            if getattr(node.targets[0], "id", "") == "name":
+                if not isinstance(node.value, ast.Constant):
+                    self.invalid_attributes.append(f"Class attribute 'name' must be a constant, found '{node.value}'")
+                elif not isinstance(node.value.value, str):
+                    self.invalid_attributes.append(
+                        f"Class attribute 'name' must be a string, found '{node.value.value}'"
+                    )
+                elif not is_valid_name(node.value.value):
+                    self.invalid_attributes.append(
+                        f"Class attribute 'name' must be a valid Python identifier and not a reserved keyword, found '{node.value.value}'"
+                    )
+
         def _check_init_function_parameters(self, node):
             # Check defaults in parameters
             for arg, default in reversed(list(zip_longest(reversed(node.args.args), reversed(node.args.defaults)))):
@@ -210,6 +235,9 @@ def validate_tool_attributes(cls, check_imports: bool = True) -> None:
     class_level_checker.visit(class_node)
 
     errors = []
+    # Check invalid class attributes
+    if class_level_checker.invalid_attributes:
+        errors += class_level_checker.invalid_attributes
     if class_level_checker.complex_attributes:
         errors.append(
             f"Complex attributes should be defined in __init__, not as class attributes: "

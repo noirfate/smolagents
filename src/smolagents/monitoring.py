@@ -15,8 +15,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import json
+from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import List, Optional
 
 from rich import box
 from rich.console import Console, Group
@@ -30,7 +30,52 @@ from rich.tree import Tree
 from smolagents.utils import escape_code_brackets
 
 
-__all__ = ["AgentLogger", "LogLevel", "Monitor"]
+__all__ = ["AgentLogger", "LogLevel", "Monitor", "TokenUsage", "Timing"]
+
+
+@dataclass
+class TokenUsage:
+    """
+    Contains the token usage information for a given step or run.
+    """
+
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int = field(init=False)
+
+    def __post_init__(self):
+        self.total_tokens = self.input_tokens + self.output_tokens
+
+    def dict(self):
+        return {
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "total_tokens": self.total_tokens,
+        }
+
+
+@dataclass
+class Timing:
+    """
+    Contains the timing information for a given step or run.
+    """
+
+    start_time: float
+    end_time: float | None = None
+
+    @property
+    def duration(self):
+        return None if self.end_time is None else self.end_time - self.start_time
+
+    def dict(self):
+        return {
+            "start_time": self.start_time,
+            "end_time": self.end_time,
+            "duration": self.duration,
+        }
+
+    def __repr__(self) -> str:
+        return f"Timing(start_time={self.start_time}, end_time={self.end_time}, duration={self.duration})"
 
 
 class Monitor:
@@ -38,15 +83,14 @@ class Monitor:
         self.step_durations = []
         self.tracked_model = tracked_model
         self.logger = logger
-        if getattr(self.tracked_model, "last_input_token_count", "Not found") != "Not found":
-            self.total_input_token_count = 0
-            self.total_output_token_count = 0
+        self.total_input_token_count = 0
+        self.total_output_token_count = 0
 
-    def get_total_token_counts(self):
-        return {
-            "input": self.total_input_token_count,
-            "output": self.total_output_token_count,
-        }
+    def get_total_token_counts(self) -> TokenUsage:
+        return TokenUsage(
+            input_tokens=self.total_input_token_count,
+            output_tokens=self.total_output_token_count,
+        )
 
     def reset(self):
         self.step_durations = []
@@ -59,13 +103,13 @@ class Monitor:
         Args:
             step_log ([`MemoryStep`]): Step log to update the monitor with.
         """
-        step_duration = step_log.duration
+        step_duration = step_log.timing.duration
         self.step_durations.append(step_duration)
         console_outputs = f"[Step {len(self.step_durations)}: Duration {step_duration:.2f} seconds"
 
-        if getattr(self.tracked_model, "last_input_token_count", None) is not None:
-            self.total_input_token_count += self.tracked_model.last_input_token_count
-            self.total_output_token_count += self.tracked_model.last_output_token_count
+        if step_log.token_usage is not None:
+            self.total_input_token_count += step_log.token_usage.input_tokens
+            self.total_output_token_count += step_log.token_usage.output_tokens
             console_outputs += (
                 f"| Input tokens: {self.total_input_token_count:,} | Output tokens: {self.total_output_token_count:,}"
             )
@@ -84,11 +128,14 @@ YELLOW_HEX = "#d4b702"
 
 
 class AgentLogger:
-    def __init__(self, level: LogLevel = LogLevel.INFO):
+    def __init__(self, level: LogLevel = LogLevel.INFO, console: Console | None = None):
         self.level = level
-        self.console = Console()
+        if console is None:
+            self.console = Console()
+        else:
+            self.console = console
 
-    def log(self, *args, level: str | LogLevel = LogLevel.INFO, **kwargs) -> None:
+    def log(self, *args, level: int | str | LogLevel = LogLevel.INFO, **kwargs) -> None:
         """Logs a message to the console.
 
         Args:
@@ -99,7 +146,10 @@ class AgentLogger:
         if level <= self.level:
             self.console.print(*args, **kwargs)
 
-    def log_markdown(self, content: str, title: Optional[str] = None, level=LogLevel.INFO, style=YELLOW_HEX) -> None:
+    def log_error(self, error_message: str) -> None:
+        self.log(escape_code_brackets(error_message), style="bold red", level=LogLevel.ERROR)
+
+    def log_markdown(self, content: str, title: str | None = None, level=LogLevel.INFO, style=YELLOW_HEX) -> None:
         markdown_content = Syntax(
             content,
             lexer="markdown",
@@ -147,7 +197,7 @@ class AgentLogger:
             level=LogLevel.INFO,
         )
 
-    def log_task(self, content: str, subtitle: str, title: Optional[str] = None, level: int = LogLevel.INFO) -> None:
+    def log_task(self, content: str, subtitle: str, title: str | None = None, level: LogLevel = LogLevel.INFO) -> None:
         self.log(
             Panel(
                 f"\n[bold]{escape_code_brackets(content)}\n",
@@ -159,7 +209,7 @@ class AgentLogger:
             level=level,
         )
 
-    def log_messages(self, messages: List) -> None:
+    def log_messages(self, messages: list[dict], level: LogLevel = LogLevel.DEBUG) -> None:
         messages_as_string = "\n".join([json.dumps(dict(message), indent=4) for message in messages])
         self.log(
             Syntax(
@@ -167,7 +217,8 @@ class AgentLogger:
                 lexer="markdown",
                 theme="github-dark",
                 word_wrap=True,
-            )
+            ),
+            level=level,
         )
 
     def visualize_agent_tree(self, agent):
@@ -186,7 +237,7 @@ class AgentLogger:
 
             return Group("🛠️ [italic #1E90FF]Tools:[/italic #1E90FF]", table)
 
-        def get_agent_headline(agent, name: Optional[str] = None):
+        def get_agent_headline(agent, name: str | None = None):
             name_headline = f"{name} | " if name else ""
             return f"[bold {YELLOW_HEX}]{name_headline}{agent.__class__.__name__} | {agent.model.model_id}"
 
