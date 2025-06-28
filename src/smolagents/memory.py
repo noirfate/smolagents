@@ -51,7 +51,7 @@ class ActionStep(MemoryStep):
     tool_calls: list[ToolCall] | None = None
     error: AgentError | None = None
     model_output_message: ChatMessage | None = None
-    model_output: str | None = None
+    model_output: str | list[dict[str, Any]] | None = None
     code_action: str | None = None
     observations: str | None = None
     observations_images: list["PIL.Image.Image"] | None = None
