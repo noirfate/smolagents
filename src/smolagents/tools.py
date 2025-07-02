@@ -1220,7 +1220,9 @@ def validate_tool_arguments(tool: Tool, arguments: Any) -> str | None:
                 return f"Argument {key} has type '{parsed_type}' but should be '{tool.inputs[key]['type']}'."
         for key in tool.inputs:
             if key not in arguments:
-                return f"Argument {key} is required."
+                # 检查参数是否标记为nullable（可选）
+                if not tool.inputs[key].get("nullable", False):
+                    return f"Argument {key} is required."
         return None
     else:
         expected_type = list(tool.inputs.values())[0]["type"]
