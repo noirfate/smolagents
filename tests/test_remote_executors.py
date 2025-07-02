@@ -9,7 +9,7 @@ from rich.console import Console
 
 from smolagents.default_tools import FinalAnswerTool, WikipediaSearchTool
 from smolagents.monitoring import AgentLogger, LogLevel
-from smolagents.remote_executors import DockerExecutor, E2BExecutor, RemotePythonExecutor
+from smolagents.remote_executors import DockerExecutor, E2BExecutor, RemotePythonExecutor, WasmExecutor
 from smolagents.utils import AgentError
 
 from .utils.markers import require_run_all
@@ -161,6 +161,37 @@ class TestE2BExecutorIntegration:
         assert code_output.output == "answer1_CUSTOM_answer2"
 
 
+class TestDockerExecutorUnit:
+    def test_cleanup(self):
+        """Test that cleanup properly stops and removes the container"""
+        logger = MagicMock()
+        with (
+            patch("docker.from_env") as mock_docker_client,
+            patch("requests.post") as mock_post,
+            patch("websocket.create_connection"),
+        ):
+            # Setup mocks
+            mock_container = MagicMock()
+            mock_container.status = "running"
+            mock_container.short_id = "test123"
+
+            mock_docker_client.return_value.containers.run.return_value = mock_container
+            mock_docker_client.return_value.images.get.return_value = MagicMock()
+
+            mock_post.return_value.status_code = 201
+            mock_post.return_value.json.return_value = {"id": "test-kernel-id"}
+
+            # Create executor
+            executor = DockerExecutor(additional_imports=[], logger=logger, build_new_image=False)
+
+            # Call cleanup
+            executor.cleanup()
+
+            # Verify container was stopped and removed
+            mock_container.stop.assert_called_once()
+            mock_container.remove.assert_called_once()
+
+
 @pytest.fixture
 def docker_executor():
     executor = DockerExecutor(
@@ -192,18 +223,21 @@ class TestDockerExecutorIntegration:
 
     def test_execute_output(self):
         """Test execution that returns a string"""
+        self.executor.send_tools({"final_answer": FinalAnswerTool()})
         code_action = 'final_answer("This is the final answer")'
         code_output = self.executor(code_action)
         assert code_output.output == "This is the final answer", "Result should be 'This is the final answer'"
 
     def test_execute_multiline_output(self):
         """Test execution that returns a string"""
+        self.executor.send_tools({"final_answer": FinalAnswerTool()})
         code_action = 'result = "This is the final answer"\nfinal_answer(result)'
         code_output = self.executor(code_action)
         assert code_output.output == "This is the final answer", "Result should be 'This is the final answer'"
 
     def test_execute_image_output(self):
         """Test execution that returns a base64 image"""
+        self.executor.send_tools({"final_answer": FinalAnswerTool()})
         code_action = dedent("""
             import base64
             from PIL import Image
@@ -303,32 +337,122 @@ class TestDockerExecutorIntegration:
         assert code_output.output == "answer1_CUSTOM_answer2"
 
 
-class TestDockerExecutorUnit:
-    def test_cleanup(self):
-        """Test that cleanup properly stops and removes the container"""
+class TestWasmExecutorUnit:
+    def test_wasm_executor_instantiation(self):
         logger = MagicMock()
+
+        # Mock subprocess.run to simulate Deno being installed
         with (
-            patch("docker.from_env") as mock_docker_client,
-            patch("requests.post") as mock_post,
-            patch("websocket.create_connection"),
+            patch("subprocess.run") as mock_run,
+            patch("subprocess.Popen") as mock_popen,
+            patch("requests.get") as mock_get,
+            patch("time.sleep"),
         ):
-            # Setup mocks
-            mock_container = MagicMock()
-            mock_container.status = "running"
-            mock_container.short_id = "test123"
+            # Configure mocks
+            mock_run.return_value.returncode = 0
+            mock_process = MagicMock()
+            mock_process.poll.return_value = None
+            mock_popen.return_value = mock_process
+            mock_get.return_value.status_code = 200
 
-            mock_docker_client.return_value.containers.run.return_value = mock_container
-            mock_docker_client.return_value.images.get.return_value = MagicMock()
+            # Create the executor
+            executor = WasmExecutor(additional_imports=["numpy", "pandas"], logger=logger, timeout=30)
 
-            mock_post.return_value.status_code = 201
-            mock_post.return_value.json.return_value = {"id": "test-kernel-id"}
+            # Verify the executor was created correctly
+            assert isinstance(executor, WasmExecutor)
+            assert executor.logger == logger
+            assert executor.timeout == 30
+            assert "numpy" in executor.installed_packages
+            assert "pandas" in executor.installed_packages
 
-            # Create executor
-            executor = DockerExecutor(additional_imports=[], logger=logger, build_new_image=False)
+            # Verify Deno was checked
+            assert mock_run.call_count == 1
+            assert mock_run.call_args.args[0][0] == "deno"
+            assert mock_run.call_args.args[0][1] == "--version"
 
-            # Call cleanup
-            executor.cleanup()
+            # Verify server was started
+            assert mock_popen.call_count == 1
+            assert mock_popen.call_args.args[0][0] == "deno"
+            assert mock_popen.call_args.args[0][1] == "run"
 
-            # Verify container was stopped and removed
-            mock_container.stop.assert_called_once()
-            mock_container.remove.assert_called_once()
+            # Clean up
+            with patch("shutil.rmtree"):
+                executor.cleanup()
+
+
+@require_run_all
+class TestWasmExecutorIntegration:
+    """
+    Integration tests for WasmExecutor.
+
+    These tests require Deno to be installed on the system.
+    Skip these tests if you don't have Deno installed.
+    """
+
+    @pytest.fixture(autouse=True)
+    def setup_and_teardown(self):
+        """Setup and teardown for each test."""
+        try:
+            # Check if Deno is installed
+            import subprocess
+
+            subprocess.run(["deno", "--version"], capture_output=True, check=True)
+
+            # Create the executor
+            self.executor = WasmExecutor(
+                additional_imports=["numpy", "pandas"],
+                logger=AgentLogger(LogLevel.INFO, Console(force_terminal=False, file=io.StringIO())),
+                timeout=60,
+            )
+            yield
+            # Clean up
+            self.executor.cleanup()
+        except (subprocess.SubprocessError, FileNotFoundError):
+            pytest.skip("Deno is not installed, skipping integration tests")
+
+    def test_basic_execution(self):
+        """Test basic code execution."""
+        code = "a = 2 + 2; print(f'Result: {a}')"
+        code_output = self.executor(code)
+        assert "Result: 4" in code_output.logs
+
+    def test_state_persistence(self):
+        """Test that variables persist between executions."""
+        # Define a variable
+        self.executor("x = 42")
+
+        # Use the variable in a subsequent execution
+        code_output = self.executor("print(x)")
+        assert "42" in code_output.logs
+
+    def test_final_answer(self):
+        """Test returning a final answer."""
+        self.executor.send_tools({"final_answer": FinalAnswerTool()})
+        code = 'final_answer("This is the final answer")'
+        code_output = self.executor(code)
+        assert code_output.output == "This is the final answer"
+        assert code_output.is_final_answer is True
+
+    def test_numpy_execution(self):
+        """Test execution with NumPy."""
+        code = """
+        import numpy as np
+        arr = np.array([1, 2, 3, 4, 5])
+        print(f"Mean: {np.mean(arr)}")
+        """
+        code_output = self.executor(code)
+        assert "Mean: 3.0" in code_output.logs
+
+    def test_error_handling(self):
+        """Test handling of Python errors."""
+        code = "1/0"  # Division by zero
+        with pytest.raises(AgentError) as excinfo:
+            self.executor(code)
+        assert "ZeroDivisionError" in str(excinfo.value)
+
+    def test_syntax_error_handling(self):
+        """Test handling of syntax errors."""
+        code = "print('Missing parenthesis"  # Missing closing parenthesis
+        with pytest.raises(AgentError) as excinfo:
+            self.executor(code)
+        assert "SyntaxError" in str(excinfo.value)

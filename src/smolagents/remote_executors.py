@@ -17,7 +17,10 @@
 import base64
 import inspect
 import json
+import os
 import pickle
+import subprocess
+import tempfile
 import time
 from io import BytesIO
 from pathlib import Path
@@ -32,6 +35,9 @@ from .local_python_executor import CodeOutput, PythonExecutor
 from .monitoring import LogLevel
 from .tools import Tool, get_tools_definition_code
 from .utils import AgentError
+
+
+__all__ = ["E2BExecutor", "DockerExecutor", "WasmExecutor"]
 
 
 try:
@@ -450,4 +456,307 @@ class DockerExecutor(RemotePythonExecutor):
         self.cleanup()
 
 
-__all__ = ["E2BExecutor", "DockerExecutor"]
+class WasmExecutor(RemotePythonExecutor):
+    """
+    Remote Python code executor in a sandboxed WebAssembly environment powered by Pyodide and Deno.
+
+    This executor combines Deno's secure runtime with Pyodide's WebAssembly‑compiled Python interpreter to deliver s
+    trong isolation guarantees while enabling full Python execution.
+
+    Args:
+        additional_imports (`list[str]`): Additional Python packages to install in the Pyodide environment.
+        logger (`Logger`): Logger to use for output and errors.
+        deno_path (`str`, optional): Path to the Deno executable. If not provided, will use "deno" from PATH.
+        deno_permissions (`list[str]`, optional): List of permissions to grant to the Deno runtime.
+            Default is minimal permissions needed for execution.
+        timeout (`int`, optional): Timeout in seconds for code execution. Default is 60 seconds.
+    """
+
+    def __init__(
+        self,
+        additional_imports: list[str],
+        logger,
+        deno_path: str = "deno",
+        deno_permissions: list[str] | None = None,
+        timeout: int = 60,
+    ):
+        super().__init__(additional_imports, logger)
+
+        # Check if Deno is installed
+        try:
+            subprocess.run([deno_path, "--version"], capture_output=True, check=True)
+        except (subprocess.SubprocessError, FileNotFoundError):
+            raise RuntimeError(
+                "Deno is not installed or not found in PATH. Please install Deno from https://deno.land/"
+            )
+
+        self.deno_path = deno_path
+        self.timeout = timeout
+
+        # Default minimal permissions needed
+        if deno_permissions is None:
+            # Use minimal permissions for Deno execution
+            home_dir = os.getenv("HOME")
+            deno_permissions = [
+                "allow-net="
+                + ",".join(
+                    [
+                        "0.0.0.0:8000",  # allow requests to the local server
+                        "cdn.jsdelivr.net:443",  # allow loading pyodide packages
+                        "pypi.org:443,files.pythonhosted.org:443",  # allow pyodide install packages from PyPI
+                    ]
+                ),
+                f"allow-read={home_dir}/.cache/deno",
+                f"allow-write={home_dir}/.cache/deno",
+            ]
+        self.deno_permissions = [f"--{perm}" for perm in deno_permissions]
+
+        # Create the Deno JavaScript runner file
+        self._create_deno_runner()
+
+        # Install additional packages
+        self.installed_packages = self.install_packages(additional_imports)
+        self.logger.log("WasmExecutor is running", level=LogLevel.INFO)
+
+    def _create_deno_runner(self):
+        """Create the Deno JavaScript file that will run Pyodide and execute Python code."""
+        self.runner_dir = tempfile.mkdtemp(prefix="pyodide_deno_")
+        self.runner_path = os.path.join(self.runner_dir, "pyodide_runner.js")
+
+        # Create the JavaScript runner file
+        with open(self.runner_path, "w") as f:
+            f.write(self.JS_CODE)
+
+        # Start the Deno server
+        self._start_deno_server()
+
+    def _start_deno_server(self):
+        """Start the Deno server that will run our JavaScript code."""
+        cmd = [self.deno_path, "run"] + self.deno_permissions + [self.runner_path]
+
+        # Start the server process
+        self.server_process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        # Wait for the server to start
+        time.sleep(2)  # Give the server time to start
+
+        # Check if the server started successfully
+        if self.server_process.poll() is not None:
+            stderr = self.server_process.stderr.read()
+            raise RuntimeError(f"Failed to start Deno server: {stderr}")
+
+        self.server_url = "http://localhost:8000"  # TODO: Another port?
+
+        # Test the connection
+        try:
+            response = requests.get(self.server_url)
+            if response.status_code != 200:
+                raise RuntimeError(f"Server responded with status code {response.status_code}: {response.text}")
+        except requests.RequestException as e:
+            raise RuntimeError(f"Failed to connect to Deno server: {e}")
+
+    def run_code_raise_errors(self, code: str) -> CodeOutput:
+        """
+        Execute Python code in the Pyodide environment and return the result.
+
+        Args:
+            code (`str`): Python code to execute.
+
+        Returns:
+            `CodeOutput`: Code output containing the result, logs, and whether it is the final answer.
+        """
+        try:
+            # Prepare the request payload
+            payload = {
+                "code": code,
+                "packages": self.installed_packages,
+            }
+
+            # Send the request to the Deno server
+            response = requests.post(self.server_url, json=payload, timeout=self.timeout)
+
+            if response.status_code != 200:
+                raise AgentError(f"Server error: {response.text}", self.logger)
+
+            result = None
+            is_final_answer = False
+
+            # Parse the response
+            result_data = response.json()
+
+            # Process the result
+            if result_data.get("result"):
+                result = result_data.get("result")
+            # Check for execution errors
+            elif result_data.get("error"):
+                error = result_data["error"]
+                if (
+                    error.get("pythonExceptionType") == RemotePythonExecutor.FINAL_ANSWER_EXCEPTION
+                    and "pythonExceptionValue" in error
+                ):
+                    result = pickle.loads(base64.b64decode(error["pythonExceptionValue"]))
+                    is_final_answer = True
+                else:
+                    error_message = f"{error.get('name', 'Error')}: {error.get('message', 'Unknown error')}"
+                    if "stack" in error:
+                        error_message += f"\n{error['stack']}"
+                    raise AgentError(error_message, self.logger)
+
+            # Get the execution logs
+            execution_logs = result_data.get("stdout", "")
+
+            # Handle image results
+            if isinstance(result, dict) and result.get("type") == "image":
+                image_data = result.get("data", "")
+                decoded_bytes = base64.b64decode(image_data.encode("utf-8"))
+                return PIL.Image.open(BytesIO(decoded_bytes)), execution_logs
+
+            return CodeOutput(output=result, logs=execution_logs, is_final_answer=is_final_answer)
+
+        except requests.RequestException as e:
+            raise AgentError(f"Failed to communicate with Deno server: {e}", self.logger)
+
+    def install_packages(self, additional_imports: list[str]) -> list[str]:
+        """
+        Install additional Python packages in the Pyodide environment.
+
+        Args:
+            additional_imports (`list[str]`): Package names to install.
+
+        Returns:
+            list[str]: Installed packages.
+        """
+        # In Pyodide, we don't actually install packages here, but we keep track of them
+        # to load them when executing code
+        # TODO: Install  here instead?
+        self.logger.log(f"Adding packages to load: {', '.join(additional_imports)}", level=LogLevel.INFO)
+        return additional_imports
+
+    def cleanup(self):
+        """Clean up resources used by the executor."""
+        if hasattr(self, "server_process") and self.server_process:
+            self.logger.log("Stopping Deno server...", level=LogLevel.INFO)
+            self.server_process.terminate()
+            try:
+                self.server_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.server_process.kill()
+
+        # Remove the temporary directory
+        if hasattr(self, "runner_dir") and os.path.exists(self.runner_dir):
+            import shutil
+
+            shutil.rmtree(self.runner_dir)
+
+    def delete(self):
+        """Ensure cleanup on deletion."""
+        self.cleanup()
+
+    JS_CODE = dedent("""\
+        // pyodide_runner.js - Runs Python code in Pyodide within Deno
+        import { serve } from "https://deno.land/std/http/server.ts";
+        import { loadPyodide } from "npm:pyodide";
+
+        // Initialize Pyodide instance
+        const pyodidePromise = loadPyodide();
+
+        // Function to execute Python code and return the result
+        async function executePythonCode(code) {
+          const pyodide = await pyodidePromise;
+
+          // Create a capture for stdout
+          pyodide.runPython(`
+            import sys
+            import io
+            sys.stdout = io.StringIO()
+          `);
+
+          // Execute the code and capture any errors
+          let result = null;
+          let error = null;
+          let stdout = "";
+
+          try {
+            // Execute the code
+            result = await pyodide.runPythonAsync(code);
+
+            // Get captured stdout
+            stdout = pyodide.runPython("sys.stdout.getvalue()");
+          } catch (e) {
+            error = {
+              name: e.constructor.name,
+              message: e.message,
+              stack: e.stack
+            };
+
+            // Extract Python exception details
+            if (e.constructor.name === "PythonError") {
+              // Get the Python exception type from the error message: at the end of the traceback
+              const errorMatch = e.message.match(/\\n([^:]+Exception): /);
+              if (errorMatch) {
+                error.pythonExceptionType = errorMatch[1].split(".").pop();
+              }
+
+              // If the error is a FinalAnswerException, extract its the encoded value
+              if (error.pythonExceptionType === "FinalAnswerException") {
+                // Extract the base64 encoded value from the error message
+                const valueMatch = e.message.match(/FinalAnswerException: (.*?)(?:\\n|$)/);
+                if (valueMatch) {
+                  error.pythonExceptionValue = valueMatch[1];
+                }
+              }
+            }
+          }
+
+          return {
+            result,
+            stdout,
+            error
+          };
+        }
+
+        // Start a simple HTTP server to receive code execution requests
+        //const port = 8765;
+        //console.log(`Starting Pyodide server on port ${port}`);
+
+        serve(async (req) => {
+          if (req.method === "POST") {
+            try {
+              const body = await req.json();
+              const { code, packages = [] } = body;
+
+              // Load any requested packages
+              if (packages && packages.length > 0) {
+                const pyodide = await pyodidePromise;
+                //await pyodide.loadPackagesFromImports(code);
+                await pyodide.loadPackage("micropip");
+                const micropip = pyodide.pyimport("micropip");
+                try {
+                  await micropip.install(packages);
+                } catch (e) {
+                  console.error(`Failed to load package ${pkg}: ${e.message}`);
+                }
+              }
+
+              const result = await executePythonCode(code);
+              return new Response(JSON.stringify(result), {
+                headers: { "Content-Type": "application/json" }
+              });
+            } catch (e) {
+              return new Response(JSON.stringify({ error: e.message }), {
+                status: 500,
+                headers: { "Content-Type": "application/json" }
+              });
+            }
+          }
+
+          return new Response("Pyodide-Deno Executor is running. Send POST requests with code to execute.", {
+            headers: { "Content-Type": "text/plain" }
+          });
+        });
+        """)
