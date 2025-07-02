@@ -26,7 +26,7 @@ from smolagents import (
 
 
 load_dotenv(override=True)
-login(os.getenv("HF_TOKEN"))
+#login(os.getenv("HF_TOKEN"))
 
 append_answer_lock = threading.Lock()
 
@@ -37,6 +37,11 @@ def parse_args():
         "question", type=str, help="for example: 'How many studio albums did Mercedes Sosa release before 2007?'"
     )
     parser.add_argument("--model-id", type=str, default="o1")
+    parser.add_argument(
+        "--enable-monitoring", 
+        action="store_true", 
+        help="启用Phoenix监控，查看LLM输入输出 (需要安装phoenix和openinference相关包)"
+    )
     return parser.parse_args()
 
 
@@ -59,9 +64,11 @@ os.makedirs(f"./{BROWSER_CONFIG['downloads_folder']}", exist_ok=True)
 
 def create_agent(model_id="o1"):
     model_params = {
-        "model_id": model_id,
+        "model_id": f"litellm_proxy/{model_id}",
         "custom_role_conversions": custom_role_conversions,
         "max_completion_tokens": 8192,
+        "api_key": os.getenv("API_KEY"),
+        "base_url": os.getenv("BASE_URL")
     }
     if model_id == "o1":
         model_params["reasoning_effort"] = "high"
@@ -70,7 +77,7 @@ def create_agent(model_id="o1"):
     text_limit = 100000
     browser = SimpleTextBrowser(**BROWSER_CONFIG)
     WEB_TOOLS = [
-        GoogleSearchTool(provider="serper"),
+        GoogleSearchTool(),
         VisitTool(browser),
         PageUpTool(browser),
         PageDownTool(browser),
@@ -113,6 +120,23 @@ def create_agent(model_id="o1"):
 
 def main():
     args = parse_args()
+
+    # 根据参数决定是否启用监控插桩
+    if args.enable_monitoring:
+        try:
+            from phoenix.otel import register
+            from openinference.instrumentation.smolagents import SmolagentsInstrumentor
+            
+            print("🔍 启用Phoenix监控，LLM输入输出将被记录...")
+            register()
+            SmolagentsInstrumentor().instrument()
+            print("✅ 监控插桩已启用")
+        except ImportError as e:
+            print(f"❌ 无法启用监控功能，缺少依赖包: {e}")
+            print("请安装: pip install 'arize-phoenix[evals]' openinference-instrumentation-smolagents")
+            return
+    else:
+        print("📝 监控功能已禁用，如需启用请添加 --enable-monitoring 参数")
 
     agent = create_agent(model_id=args.model_id)
 
