@@ -60,6 +60,11 @@ def parse_arguments():
         type=str,
         help="The API key to use for the model",
     )
+    parser.add_argument(
+        "--enable-monitoring", 
+        action="store_true", 
+        help="enable phoenix monitoring"
+    )
     return parser.parse_args()
 
 
@@ -202,6 +207,7 @@ def run_webagent(
     provider: str | None = None,
     api_base: str | None = None,
     api_key: str | None = None,
+    enable_monitoring: bool = False,
 ) -> None:
     # Load environment variables
     load_dotenv()
@@ -221,7 +227,24 @@ def run_webagent(
 def main() -> None:
     # Parse command line arguments
     args = parse_arguments()
-    run_webagent(args.prompt, args.model_type, args.model_id, args.provider, args.api_base, args.api_key)
+    
+    # 根据参数决定是否启用监控插桩
+    if args.enable_monitoring:
+        try:
+            from phoenix.otel import register
+            from openinference.instrumentation.smolagents import SmolagentsInstrumentor
+            
+            register()
+            SmolagentsInstrumentor().instrument()
+            print("✅ Phoenix monitoring enabled")
+        except ImportError as e:
+            print(f"❌ Failed to enable monitoring, missing dependencies: {e}")
+            print("Please install: pip install 'arize-phoenix[evals]' openinference-instrumentation-smolagents")
+            return
+    else:
+        print("📝 Phoenix monitoring disabled, please add --enable-monitoring to enable it")
+    
+    run_webagent(args.prompt, args.model_type, args.model_id, args.provider, args.api_base, args.api_key, args.enable_monitoring)
 
 
 if __name__ == "__main__":
