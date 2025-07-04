@@ -99,7 +99,7 @@ def create_agent(model_id="o1"):
     And don't hesitate to provide him with a complex search task, like finding a difference between two webpages.
     Your request must be a real sentence, not a google search! Like "Find me this information (...)" rather than a few keywords.
     """,
-        provide_run_summary=True,
+        #provide_run_summary=True,
     )
     text_webbrowser_agent.prompt_templates["managed_agent"]["task"] += """You can navigate to .txt online files.
     If a non-html page is in another format, especially .pdf or a Youtube video, use tool 'inspect_file_as_text' to inspect it.
