@@ -18,9 +18,9 @@ SUPPORTED_MODELS = [
     "gpt-4o", 
     "o3",
     "gpt-4.5-preview",
-    "claude-sonnet-4",
-    "ark-deepseek-r1",
-    "gemini-2.5-pro"
+    "claude-sonnet-4-20250514",
+    "ark-deepseek-r1-250528",
+    "gemini-2.5-pro-preview-05-06"
 ]
 
 class StreamCapture:
