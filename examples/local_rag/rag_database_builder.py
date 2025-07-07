@@ -1,26 +1,20 @@
 """
 RAG数据库构建器
 
-支持从环境变量或.env文件获取配置参数。
-
 使用方法：
-1. 创建 .env 文件（可选）：
-   RAG_DOCUMENTS_PATH=./my_documents
-   RAG_VECTOR_DB_PATH=./local_vector_db
-   RAG_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
-   RAG_CHUNK_SIZE=1000
-   RAG_CHUNK_OVERLAP=200
-   RAG_COLLECTION_NAME=local_documents
-   RAG_FORCE_REBUILD=false
+1. 使用默认参数：
+   builder = RAGDatabaseBuilder()
 
-2. 使用环境变量：
-   builder = RAGDatabaseBuilder()  # 从环境变量获取所有配置
-
-3. 显式传递参数：
+2. 自定义配置：
    builder = RAGDatabaseBuilder(
        documents_path="./docs",
-       embedding_model="shibing624/text2vec-base-chinese"
+       embedding_model="Qwen/Qwen3-Embedding-0.6B",
+       chunk_size=1200
    )
+
+3. 使用命令行参数：
+   python rag_database_builder.py --force-rebuild
+   python rag_database_builder.py --embedding-model Qwen/Qwen3-Embedding-0.6B
 """
 
 import os
@@ -29,8 +23,7 @@ from pathlib import Path
 from typing import List, Optional
 import hashlib
 
-# 环境变量支持
-from dotenv import load_dotenv
+
 
 # 文档加载器
 from langchain_community.document_loaders import (
@@ -45,18 +38,8 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 
-# 加载环境变量
-load_dotenv()
+# 禁用匿名遥测
 os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
-
-# 支持的环境变量：
-# RAG_DOCUMENTS_PATH - 文档路径
-# RAG_VECTOR_DB_PATH - 向量数据库路径
-# RAG_EMBEDDING_MODEL - 嵌入模型名称
-# RAG_CHUNK_SIZE - 分块大小
-# RAG_CHUNK_OVERLAP - 分块重叠大小
-# RAG_COLLECTION_NAME - 集合名称
-# RAG_FORCE_REBUILD - 是否强制重建 (true/false)
 
 # 设置日志
 logging.basicConfig(level=logging.INFO)
@@ -67,38 +50,19 @@ class RAGDatabaseBuilder:
     
     def __init__(
         self,
-        documents_path: str = None,
-        vector_db_path: str = None,
-        embedding_model: str = None,
-        chunk_size: int = None,
-        chunk_overlap: int = None,
-        collection_name: str = None
+        documents_path: str = "./my_documents",
+        vector_db_path: str = "./local_vector_db", 
+        embedding_model: str = "Qwen/Qwen3-Embedding-0.6B",
+        chunk_size: int = 1000,
+        chunk_overlap: int = 200,
+        collection_name: str = "local_documents"
     ):
-        # 从环境变量获取配置，如果没有提供参数的话
-        self.documents_path = Path(
-            documents_path or 
-            os.getenv("RAG_DOCUMENTS_PATH", "./my_documents")
-        )
-        self.vector_db_path = Path(
-            vector_db_path or 
-            os.getenv("RAG_VECTOR_DB_PATH", "./local_vector_db")
-        )
-        self.embedding_model_name = (
-            embedding_model or 
-            os.getenv("RAG_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
-        )
-        self.chunk_size = (
-            chunk_size or 
-            int(os.getenv("RAG_CHUNK_SIZE", "1000"))
-        )
-        self.chunk_overlap = (
-            chunk_overlap or 
-            int(os.getenv("RAG_CHUNK_OVERLAP", "200"))
-        )
-        self.collection_name = (
-            collection_name or 
-            os.getenv("RAG_COLLECTION_NAME", "local_documents")
-        )
+        self.documents_path = Path(documents_path)
+        self.vector_db_path = Path(vector_db_path)
+        self.embedding_model_name = embedding_model
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+        self.collection_name = collection_name
         
         # 支持的文件格式
         self.supported_extensions = {
@@ -224,8 +188,22 @@ class RAGDatabaseBuilder:
         """构建向量数据库"""
         # 检查是否需要重建
         if not force_rebuild and self.database_exists():
-            logger.info("向量数据库已存在，加载现有数据库...")
-            return self.load_database()
+            logger.info("向量数据库已存在，尝试加载现有数据库...")
+            try:
+                return self.load_database()
+            except Exception as e:
+                if "expecting embedding with dimension" in str(e):
+                    logger.warning(f"⚠️  检测到嵌入模型维度不匹配: {e}")
+                    logger.warning(f"当前模型 {self.embedding_model_name} 与现有数据库不兼容")
+                    logger.info("🔄 自动切换到重建模式...")
+                    force_rebuild = True
+                else:
+                    raise e
+        
+        # 如果需要重建，先删除旧数据库
+        if force_rebuild and self.database_exists():
+            logger.info("🗑️  删除现有数据库...")
+            self.delete_database()
         
         # 加载文档
         documents = self._load_documents()
@@ -334,31 +312,27 @@ class RAGDatabaseBuilder:
             logger.info(f"已删除向量数据库: {self.vector_db_path}")
 
 def build_rag_database(
-    documents_path: str = None,
-    vector_db_path: str = None,
-    embedding_model: str = None,
-    chunk_size: int = None,
-    chunk_overlap: int = None,
+    documents_path: str = "./my_documents",
+    vector_db_path: str = "./local_vector_db",
+    embedding_model: str = "Qwen/Qwen3-Embedding-0.6B",
+    chunk_size: int = 1000,
+    chunk_overlap: int = 200,
     force_rebuild: bool = False
 ) -> Chroma:
     """
     构建RAG向量数据库的便捷函数
     
     Args:
-        documents_path: 文档路径（可选，从环境变量 RAG_DOCUMENTS_PATH 获取）
-        vector_db_path: 向量数据库保存路径（可选，从环境变量 RAG_VECTOR_DB_PATH 获取）
-        embedding_model: 嵌入模型名称（可选，从环境变量 RAG_EMBEDDING_MODEL 获取）
-        chunk_size: 文档分块大小（可选，从环境变量 RAG_CHUNK_SIZE 获取）
-        chunk_overlap: 分块重叠大小（可选，从环境变量 RAG_CHUNK_OVERLAP 获取）
-        force_rebuild: 是否强制重建（可选，从环境变量 RAG_FORCE_REBUILD 获取）
+        documents_path: 文档路径
+        vector_db_path: 向量数据库保存路径
+        embedding_model: 嵌入模型名称
+        chunk_size: 文档分块大小
+        chunk_overlap: 分块重叠大小
+        force_rebuild: 是否强制重建
     
     Returns:
         Chroma: 向量数据库实例
     """
-    # 从环境变量获取 force_rebuild 参数
-    if force_rebuild is False:  # 只有在默认值时才从环境变量获取
-        force_rebuild = os.getenv("RAG_FORCE_REBUILD", "false").lower() == "true"
-    
     builder = RAGDatabaseBuilder(
         documents_path=documents_path,
         vector_db_path=vector_db_path,
@@ -371,4 +345,85 @@ def build_rag_database(
 
 # 使用示例
 if __name__ == "__main__":
-    vector_store = build_rag_database()
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description="RAG向量数据库构建器",
+        epilog="""
+使用示例:
+  python rag_database_builder.py                    # 正常构建/加载数据库
+  python rag_database_builder.py --force-rebuild   # 强制重建数据库
+  python rag_database_builder.py --info            # 显示数据库信息
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    
+    parser.add_argument(
+        "--force-rebuild",
+        action="store_true",
+        help="强制重建向量数据库，即使已存在"
+    )
+    
+    parser.add_argument(
+        "--info",
+        action="store_true", 
+        help="显示数据库信息而不构建"
+    )
+    
+    parser.add_argument(
+        "--documents-path",
+        type=str,
+        default="./my_documents",
+        help="文档路径 (默认: ./my_documents)"
+    )
+    
+    parser.add_argument(
+        "--vector-db-path", 
+        type=str,
+        default="./local_vector_db",
+        help="向量数据库路径 (默认: ./local_vector_db)"
+    )
+    
+    parser.add_argument(
+        "--embedding-model",
+        type=str,
+        default="Qwen/Qwen3-Embedding-0.6B",
+        help="嵌入模型名称 (默认: Qwen/Qwen3-Embedding-0.6B)"
+    )
+    
+    args = parser.parse_args()
+    
+    if args.info:
+        # 显示数据库信息
+        try:
+            builder = RAGDatabaseBuilder(
+                documents_path=args.documents_path,
+                vector_db_path=args.vector_db_path,
+                embedding_model=args.embedding_model
+            )
+            
+            if builder.database_exists():
+                print("📊 数据库信息:")
+                info = builder.get_database_info()
+                for key, value in info.items():
+                    print(f"   {key}: {value}")
+            else:
+                print("❌ 数据库不存在")
+        except Exception as e:
+            print(f"❌ 获取数据库信息失败: {e}")
+    else:
+        # 构建/加载数据库
+        print(f"🔨 开始构建RAG数据库...")
+        print(f"📊 强制重建: {args.force_rebuild}")
+        print(f"📁 文档路径: {args.documents_path}")
+        print(f"💾 数据库路径: {args.vector_db_path}")
+        print(f"🤖 嵌入模型: {args.embedding_model}")
+            
+        vector_store = build_rag_database(
+            documents_path=args.documents_path,
+            vector_db_path=args.vector_db_path,
+            embedding_model=args.embedding_model,
+            force_rebuild=args.force_rebuild
+        )
+        
+        print("✅ 数据库构建完成！")
