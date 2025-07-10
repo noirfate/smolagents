@@ -22,13 +22,49 @@ from smolagents import (
     # InferenceClientModel,
     LiteLLMModel,
     ToolCallingAgent,
+    MCPClient,
+    Tool,
 )
+
+from mcp import StdioServerParameters
 
 
 load_dotenv(override=True)
 #login(os.getenv("HF_TOKEN"))
 
 append_answer_lock = threading.Lock()
+
+
+def fix_github_tool_types(github_tools):
+    """
+    GitHub MCP server 期望 JSON Schema 的 "number" 类型，但 Python 的 int 会被映射为 "integer" 类型。
+    """
+    wrapped_tools = []
+    
+    for tool in github_tools:
+        class GitHubToolWrapper(Tool):
+            skip_forward_signature_validation = True  # 跳过签名验证
+            
+            def __init__(self, original_tool):
+                self.original_tool = original_tool
+                self.name = original_tool.name
+                self.description = original_tool.description
+                self.inputs = original_tool.inputs.copy()
+                self.output_type = original_tool.output_type
+                self.is_initialized = True
+                
+                # 修改 inputs 定义，将 number 类型改为 integer，避免类型验证错误
+                for key, input_def in self.inputs.items():
+                    if input_def.get("type") == "number":
+                        self.inputs[key] = input_def.copy()
+                        self.inputs[key]["type"] = "integer"
+                
+            def forward(self, *args, **kwargs):
+                return self.original_tool(*args, **kwargs)
+        
+        wrapped_tools.append(GitHubToolWrapper(tool))
+    
+    return wrapped_tools
 
 
 def parse_args():
@@ -86,6 +122,36 @@ def create_agent(model_id="o1"):
         ArchiveSearchTool(browser),
         TextInspectorTool(model, text_limit),
     ]
+    
+    # 集成GitHub MCP server
+    GITHUB_TOOLS = []
+    github_token = os.getenv("GITHUB_TOKEN")
+    github_mcp_client = None
+
+    if github_token:
+        try:
+            print("🔗 正在连接GitHub MCP server...")
+            # 配置GitHub MCP server - 使用远程HTTP连接
+            github_mcp_config = StdioServerParameters(
+                command="docker", 
+                args=["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN=" + github_token, "-e", "GITHUB_TOOLSETS=repos,issues,pull_requests", "ghcr.io/github/github-mcp-server"]
+            )
+            
+            # 创建MCP客户端连接到GitHub server
+            github_mcp_client = MCPClient(github_mcp_config)
+            raw_github_tools = github_mcp_client.get_tools()
+            
+            # 包装GitHub工具以修复类型问题
+            GITHUB_TOOLS = fix_github_tool_types(raw_github_tools)
+            
+            print(f"✅ GitHub MCP server已连接，获得 {len(GITHUB_TOOLS)} 个GitHub工具")
+            
+        except Exception as e:
+            print(f"⚠️ 连接GitHub MCP server失败: {e}")
+            print(f"   错误类型: {type(e).__name__}")
+            GITHUB_TOOLS = []
+
+    # 创建网络搜索agent
     text_webbrowser_agent = ToolCallingAgent(
         model=model,
         tools=WEB_TOOLS,
@@ -105,6 +171,46 @@ def create_agent(model_id="o1"):
     If a non-html page is in another format, especially .pdf or a Youtube video, use tool 'inspect_file_as_text' to inspect it.
     Additionally, if after some searching you find out that you need more information to answer the question, you can use `final_answer` with your request for clarification as argument to request for more information."""
 
+    # 创建GitHub MCP agent（如果有GitHub工具）
+    managed_agents = [text_webbrowser_agent]
+    
+    if GITHUB_TOOLS:
+        github_agent = ToolCallingAgent(
+            model=model,
+            tools=GITHUB_TOOLS,
+            max_steps=10,
+            verbosity_level=2,
+            planning_interval=3,
+            name="github_agent",
+            description="""A specialized team member for GitHub operations and code repository analysis.
+        Ask him for all your questions related to GitHub and code repositories.
+        He can:
+        - Search GitHub repositories and code
+        - Create and manage GitHub issues and pull requests
+        - Analyze repository information and statistics
+        - Retrieve and analyze commit history
+        - Search for code patterns and implementations
+        - Analyze repository structures and dependencies
+        - Find popular repositories and trending projects
+        
+        He specializes in code analysis, repository management, and GitHub ecosystem exploration.
+        Provide him with specific requests about repositories, code searches, or GitHub operations.
+        """,
+            #provide_run_summary=True,
+        )
+        github_agent.prompt_templates["managed_agent"]["task"] += """
+        When working with GitHub:
+        - Be specific about repository names and owners when known
+        - Use appropriate search terms for code and repository searches
+        - Consider repository popularity, activity, and maintenance status
+        - Analyze code quality, documentation, and community engagement
+        - Provide insights about development trends and best practices
+        - Help with repository discovery and comparison
+        """
+        
+        managed_agents.append(github_agent)
+        print(f"🤖 已创建GitHub agent，包含 {len(GITHUB_TOOLS)} 个GitHub工具")
+
     manager_agent = CodeAgent(
         model=model,
         tools=[visualizer, TextInspectorTool(model, text_limit)],
@@ -112,7 +218,7 @@ def create_agent(model_id="o1"):
         verbosity_level=2,
         additional_authorized_imports=["*"],
         planning_interval=4,
-        managed_agents=[text_webbrowser_agent],
+        managed_agents=managed_agents,
     )
 
     return manager_agent
@@ -137,6 +243,15 @@ def main():
             return
     else:
         print("📝 监控功能已禁用，如需启用请添加 --enable-monitoring 参数")
+
+    # 检查GitHub集成配置
+    github_token = os.getenv("GITHUB_TOKEN")
+    if github_token:
+        print("🔗 检测到GITHUB_TOKEN，将集成GitHub MCP server功能")
+    else:
+        print("💡 提示：设置GITHUB_TOKEN环境变量可启用GitHub集成功能")
+        print("   可以创建issues、搜索代码、分析仓库等")
+        print("   创建GitHub Personal Access Token: https://github.com/settings/tokens")
 
     agent = create_agent(model_id=args.model_id)
 
