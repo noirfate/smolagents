@@ -96,6 +96,113 @@ class TestEvaluatePythonCode:
         with pytest.raises(InterpreterError, match="Forbidden function evaluation: 'add_two'"):
             evaluate_python_code(code, {}, state=state)
 
+    @pytest.mark.parametrize(
+        "code, expected_result",
+        [
+            # Basic **kwargs unpacking
+            (
+                """
+def test_func(a, b=10, **kwargs):
+    return a + b + sum(kwargs.values())
+
+kwargs_dict = {'x': 5, 'y': 15}
+test_func(1, **kwargs_dict)
+""",
+                31,  # 1 + 10 + 5 + 15
+            ),
+            # **kwargs with regular kwargs
+            (
+                """
+def test_func(a, **kwargs):
+    return a + sum(kwargs.values())
+
+kwargs_dict = {'x': 5, 'y': 15}
+test_func(1, b=20, **kwargs_dict)
+""",
+                41,  # 1 + 20 + 5 + 15
+            ),
+            # Multiple **kwargs unpacking
+            (
+                """
+def test_func(**kwargs):
+    return sum(kwargs.values())
+
+dict1 = {'a': 1, 'b': 2}
+dict2 = {'c': 3, 'd': 4}
+test_func(**dict1, **dict2)
+""",
+                10,  # 1 + 2 + 3 + 4
+            ),
+            # **kwargs with positional args
+            (
+                """
+def test_func(x, y, **kwargs):
+    return x * y + sum(kwargs.values())
+
+params = {'factor': 2, 'offset': 5}
+test_func(3, 4, **params)
+""",
+                19,  # 3 * 4 + 2 + 5
+            ),
+            # Empty **kwargs dict
+            (
+                """
+def test_func(a, **kwargs):
+    return a + len(kwargs)
+
+empty_dict = {}
+test_func(10, **empty_dict)
+""",
+                10,  # 10 + 0
+            ),
+        ],
+    )
+    def test_evaluate_call_starred_kwargs(self, code, expected_result):
+        result, _ = evaluate_python_code(code, {"sum": sum, "len": len}, state={})
+        assert result == expected_result
+
+    @pytest.mark.parametrize(
+        "code, expected_error_message",
+        [
+            # Non-dict value in **kwargs
+            (
+                """
+def test_func(**kwargs):
+    return sum(kwargs.values())
+
+not_a_dict = [1, 2, 3]
+test_func(**not_a_dict)
+""",
+                "Cannot unpack non-dict value in **kwargs: list",
+            ),
+            # **kwargs with non-dict variable
+            (
+                """
+def test_func(**kwargs):
+    return kwargs
+
+test_func(**42)
+""",
+                "Cannot unpack non-dict value in **kwargs: int",
+            ),
+            # **kwargs with None
+            (
+                """
+def test_func(**kwargs):
+    return kwargs
+
+test_func(**None)
+""",
+                "Cannot unpack non-dict value in **kwargs: NoneType",
+            ),
+        ],
+    )
+    def test_evaluate_call_starred_kwargs_errors(self, code, expected_error_message):
+        """Test that **kwargs unpacking raises appropriate errors for non-dict values."""
+        with pytest.raises(InterpreterError) as exception_info:
+            evaluate_python_code(code, {"sum": sum}, state={})
+        assert expected_error_message in str(exception_info.value)
+
     def test_evaluate_class_def(self):
         code = dedent('''\
             class MyClass:
@@ -1796,6 +1903,30 @@ def test_check_import_authorized(module: str, authorized_imports: list[str], exp
 
 
 class TestLocalPythonExecutor:
+    @pytest.mark.parametrize(
+        "additional_authorized_imports, should_raise",
+        [
+            # Valid imports
+            (["math"], None),
+            (["math", "os"], None),  # Multiple valid imports
+            ([], None),  # Empty list of imports
+            (["*"], None),  # Wildcard allows all imports
+            (["os.*"], None),  # Submodule wildcard
+            # Invalid imports
+            (["i_do_not_exist"], True),  # Non-existent module
+            (["math", "i_do_not_exist"], True),  # Mix of valid and invalid
+            (["i_do_not_exist.*"], True),  # Non-existent module with wildcard
+        ],
+    )
+    def test_additional_authorized_imports_are_installed(self, additional_authorized_imports, should_raise):
+        expectation = (
+            pytest.raises(InterpreterError, match="Non-installed authorized modules")
+            if should_raise
+            else does_not_raise()
+        )
+        with expectation:
+            LocalPythonExecutor(additional_authorized_imports=additional_authorized_imports)
+
     def test_state_name(self):
         executor = LocalPythonExecutor(additional_authorized_imports=[])
         assert executor.state.get("__name__") == "__main__"

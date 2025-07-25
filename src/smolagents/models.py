@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 from .monitoring import TokenUsage
 from .tools import Tool
-from .utils import _is_package_available, encode_image_base64, make_image_url, parse_json_blob
+from .utils import RateLimiter, _is_package_available, encode_image_base64, make_image_url, parse_json_blob
 
 
 if TYPE_CHECKING:
@@ -270,7 +270,7 @@ def remove_stop_sequences(content: str, stop_sequences: list[str]) -> str:
 
 
 def get_clean_message_list(
-    message_list: list[ChatMessage],
+    message_list: list[ChatMessage | dict],
     role_conversions: dict[MessageRole, MessageRole] | dict[str, str] = {},
     convert_images_to_image_urls: bool = False,
     flatten_messages_as_text: bool = False,
@@ -280,7 +280,7 @@ def get_clean_message_list(
     Subsequent messages with the same role will be concatenated to a single message.
 
     Args:
-        message_list (`list[dict[str, str]]`): List of chat messages.
+        message_list (`list[ChatMessage | dict]`): List of chat messages. Mixed types are allowed.
         role_conversions (`dict[MessageRole, MessageRole]`, *optional* ): Mapping to convert roles.
         convert_images_to_image_urls (`bool`, default `False`): Whether to convert images to image URLs.
         flatten_messages_as_text (`bool`, default `False`): Whether to flatten messages as text.
@@ -288,6 +288,8 @@ def get_clean_message_list(
     output_message_list: list[dict[str, Any]] = []
     message_list = deepcopy(message_list)  # Avoid modifying the original list
     for message in message_list:
+        if isinstance(message, dict):
+            message = ChatMessage.from_dict(message)
         role = message.role
         if role not in MessageRole.roles():
             raise ValueError(f"Incorrect role {role}, only {MessageRole.roles()} are supported for now.")
@@ -408,7 +410,7 @@ class Model:
 
     def _prepare_completion_kwargs(
         self,
-        messages: list[ChatMessage],
+        messages: list[ChatMessage | dict],
         stop_sequences: list[str] | None = None,
         response_format: dict[str, str] | None = None,
         tools_to_call_from: list[Tool] | None = None,
@@ -591,7 +593,7 @@ class VLLMModel(Model):
 
     def generate(
         self,
-        messages: list[ChatMessage],
+        messages: list[ChatMessage | dict],
         stop_sequences: list[str] | None = None,
         response_format: dict[str, str] | None = None,
         tools_to_call_from: list[Tool] | None = None,
@@ -715,7 +717,7 @@ class MLXModel(Model):
 
     def generate(
         self,
-        messages: list[ChatMessage],
+        messages: list[ChatMessage | dict],
         stop_sequences: list[str] | None = None,
         response_format: dict[str, str] | None = None,
         tools_to_call_from: list[Tool] | None = None,
@@ -776,8 +778,8 @@ class TransformersModel(Model):
             The torch_dtype to initialize your model with.
         trust_remote_code (bool, default `False`):
             Some models on the Hub require running remote code: for this model, you would have to set this flag to True.
-        kwargs (dict, *optional*):
-            Any additional keyword arguments that you want to use in model.generate(), for instance `max_new_tokens` or `device`.
+        model_kwargs (`dict[str, Any]`, *optional*):
+            Additional keyword arguments to pass to `AutoModel.from_pretrained` (like revision, model_args, config, etc.).
         **kwargs:
             Additional keyword arguments to pass to `model.generate()`, for instance `max_new_tokens` or `device`.
     Raises:
@@ -804,6 +806,7 @@ class TransformersModel(Model):
         device_map: str | None = None,
         torch_dtype: str | None = None,
         trust_remote_code: bool = False,
+        model_kwargs: dict[str, Any] | None = None,
         **kwargs,
     ):
         try:
@@ -841,12 +844,14 @@ class TransformersModel(Model):
             device_map = "cuda" if torch.cuda.is_available() else "cpu"
         logger.info(f"Using device: {device_map}")
         self._is_vlm = False
+        self.model_kwargs = model_kwargs or {}
         try:
             self.model = AutoModelForImageTextToText.from_pretrained(
                 model_id,
                 device_map=device_map,
                 torch_dtype=torch_dtype,
                 trust_remote_code=trust_remote_code,
+                **self.model_kwargs,
             )
             self.processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=trust_remote_code)
             self._is_vlm = True
@@ -859,6 +864,7 @@ class TransformersModel(Model):
                     device_map=device_map,
                     torch_dtype=torch_dtype,
                     trust_remote_code=trust_remote_code,
+                    **self.model_kwargs,
                 )
                 self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=trust_remote_code)
                 self.streamer = TextIteratorStreamer(self.tokenizer, skip_prompt=True, skip_special_tokens=True)  # type: ignore
@@ -891,7 +897,7 @@ class TransformersModel(Model):
 
     def _prepare_completion_args(
         self,
-        messages: list[ChatMessage],
+        messages: list[ChatMessage | dict],
         stop_sequences: list[str] | None = None,
         tools_to_call_from: list[Tool] | None = None,
         **kwargs,
@@ -939,7 +945,7 @@ class TransformersModel(Model):
 
     def generate(
         self,
-        messages: list[ChatMessage],
+        messages: list[ChatMessage | dict],
         stop_sequences: list[str] | None = None,
         response_format: dict[str, str] | None = None,
         tools_to_call_from: list[Tool] | None = None,
@@ -983,7 +989,7 @@ class TransformersModel(Model):
 
     def generate_stream(
         self,
-        messages: list[ChatMessage],
+        messages: list[ChatMessage | dict],
         stop_sequences: list[str] | None = None,
         response_format: dict[str, str] | None = None,
         tools_to_call_from: list[Tool] | None = None,
@@ -998,21 +1004,33 @@ class TransformersModel(Model):
             tools_to_call_from=tools_to_call_from,
             **kwargs,
         )
-        count_prompt_tokens = generation_kwargs["inputs"].shape[1]  # type: ignore
 
+        # Get prompt token count once
+        count_prompt_tokens = generation_kwargs["inputs"].shape[1]  # type: ignore
+        self._last_input_token_count = count_prompt_tokens
+
+        # Start generation in a separate thread
         thread = Thread(target=self.model.generate, kwargs={"streamer": self.streamer, **generation_kwargs})
         thread.start()
 
-        # Generate with streaming
+        # Process streaming output
+        is_first_token = True
+        count_generated_tokens = 0
         for new_text in self.streamer:
-            self._last_input_token_count = count_prompt_tokens
-            self._last_output_token_count = 1
+            count_generated_tokens += 1
+            # Only include input tokens in the first yielded token
+            input_tokens = count_prompt_tokens if is_first_token else 0
+            is_first_token = False
             yield ChatMessageStreamDelta(
                 content=new_text,
                 tool_calls=None,
-                token_usage=TokenUsage(input_tokens=count_prompt_tokens, output_tokens=1),
+                token_usage=TokenUsage(input_tokens=input_tokens, output_tokens=1),
             )
+            count_prompt_tokens = 0
         thread.join()
+
+        # Update final output token count
+        self._last_output_token_count = count_generated_tokens
 
 
 class ApiModel(Model):
@@ -1030,19 +1048,31 @@ class ApiModel(Model):
             Mapping to convert  between internal role names and API-specific role names. Defaults to None.
         client (`Any`, **optional**):
             Pre-configured API client instance. If not provided, a default client will be created. Defaults to None.
+        requests_per_minute (`float`, **optional**):
+            Rate limit in requests per minute.
         **kwargs: Additional keyword arguments to pass to the parent class.
     """
 
     def __init__(
-        self, model_id: str, custom_role_conversions: dict[str, str] | None = None, client: Any | None = None, **kwargs
+        self,
+        model_id: str,
+        custom_role_conversions: dict[str, str] | None = None,
+        client: Any | None = None,
+        requests_per_minute: float | None = None,
+        **kwargs,
     ):
         super().__init__(model_id=model_id, **kwargs)
         self.custom_role_conversions = custom_role_conversions or {}
         self.client = client or self.create_client()
+        self.rate_limiter = RateLimiter(requests_per_minute)
 
     def create_client(self):
         """Create the API client for the specific service."""
         raise NotImplementedError("Subclasses must implement this method to create a client")
+
+    def _apply_rate_limit(self):
+        """Apply rate limiting before making API calls."""
+        self.rate_limiter.throttle()
 
 
 class LiteLLMModel(ApiModel):
@@ -1108,7 +1138,7 @@ class LiteLLMModel(ApiModel):
 
     def generate(
         self,
-        messages: list[ChatMessage],
+        messages: list[ChatMessage | dict],
         stop_sequences: list[str] | None = None,
         response_format: dict[str, str] | None = None,
         tools_to_call_from: list[Tool] | None = None,
@@ -1126,7 +1156,7 @@ class LiteLLMModel(ApiModel):
             custom_role_conversions=self.custom_role_conversions,
             **kwargs,
         )
-
+        self._apply_rate_limit()
         response = self.client.completion(**completion_kwargs)
 
         self._last_input_token_count = response.usage.prompt_tokens
@@ -1142,7 +1172,7 @@ class LiteLLMModel(ApiModel):
 
     def generate_stream(
         self,
-        messages: list[ChatMessage],
+        messages: list[ChatMessage | dict],
         stop_sequences: list[str] | None = None,
         response_format: dict[str, str] | None = None,
         tools_to_call_from: list[Tool] | None = None,
@@ -1160,6 +1190,7 @@ class LiteLLMModel(ApiModel):
             convert_images_to_image_urls=True,
             **kwargs,
         )
+        self._apply_rate_limit()
         for event in self.client.completion(**completion_kwargs, stream=True, stream_options={"include_usage": True}):
             if getattr(event, "usage", None):
                 self._last_input_token_count = event.usage.prompt_tokens
@@ -1385,7 +1416,7 @@ class InferenceClientModel(ApiModel):
 
     def generate(
         self,
-        messages: list[ChatMessage],
+        messages: list[ChatMessage | dict],
         stop_sequences: list[str] | None = None,
         response_format: dict[str, str] | None = None,
         tools_to_call_from: list[Tool] | None = None,
@@ -1405,6 +1436,7 @@ class InferenceClientModel(ApiModel):
             custom_role_conversions=self.custom_role_conversions,
             **kwargs,
         )
+        self._apply_rate_limit()
         response = self.client.chat_completion(**completion_kwargs)
 
         self._last_input_token_count = response.usage.prompt_tokens
@@ -1420,7 +1452,7 @@ class InferenceClientModel(ApiModel):
 
     def generate_stream(
         self,
-        messages: list[ChatMessage],
+        messages: list[ChatMessage | dict],
         stop_sequences: list[str] | None = None,
         response_format: dict[str, str] | None = None,
         tools_to_call_from: list[Tool] | None = None,
@@ -1436,6 +1468,7 @@ class InferenceClientModel(ApiModel):
             convert_images_to_image_urls=True,
             **kwargs,
         )
+        self._apply_rate_limit()
         for event in self.client.chat.completions.create(
             **completion_kwargs, stream=True, stream_options={"include_usage": True}
         ):
@@ -1534,7 +1567,7 @@ class OpenAIServerModel(ApiModel):
 
     def generate_stream(
         self,
-        messages: list[ChatMessage],
+        messages: list[ChatMessage | dict],
         stop_sequences: list[str] | None = None,
         response_format: dict[str, str] | None = None,
         tools_to_call_from: list[Tool] | None = None,
@@ -1550,6 +1583,7 @@ class OpenAIServerModel(ApiModel):
             convert_images_to_image_urls=True,
             **kwargs,
         )
+        self._apply_rate_limit()
         for event in self.client.chat.completions.create(
             **completion_kwargs, stream=True, stream_options={"include_usage": True}
         ):
@@ -1586,7 +1620,7 @@ class OpenAIServerModel(ApiModel):
 
     def generate(
         self,
-        messages: list[ChatMessage],
+        messages: list[ChatMessage | dict],
         stop_sequences: list[str] | None = None,
         response_format: dict[str, str] | None = None,
         tools_to_call_from: list[Tool] | None = None,
@@ -1602,6 +1636,7 @@ class OpenAIServerModel(ApiModel):
             convert_images_to_image_urls=True,
             **kwargs,
         )
+        self._apply_rate_limit()
         response = self.client.chat.completions.create(**completion_kwargs)
 
         # Reported that `response.usage` can be None in some cases when using OpenRouter: see GH-1401
@@ -1705,27 +1740,34 @@ class AmazonBedrockServerModel(ApiModel):
         **kwargs
             Additional keyword arguments passed directly to the underlying API calls.
 
-    Example:
+    Examples:
         Creating a model instance with default settings:
+        ```python
         >>> bedrock_model = AmazonBedrockServerModel(
         ...     model_id='us.amazon.nova-pro-v1:0'
         ... )
+        ```
 
         Creating a model instance with a custom boto3 client:
+        ```python
         >>> import boto3
         >>> client = boto3.client('bedrock-runtime', region_name='us-west-2')
         >>> bedrock_model = AmazonBedrockServerModel(
         ...     model_id='us.amazon.nova-pro-v1:0',
         ...     client=client
         ... )
+        ```
 
         Creating a model instance with client_kwargs for internal client creation:
+        ```python
         >>> bedrock_model = AmazonBedrockServerModel(
         ...     model_id='us.amazon.nova-pro-v1:0',
         ...     client_kwargs={'region_name': 'us-west-2', 'endpoint_url': 'https://custom-endpoint.com'}
         ... )
+        ```
 
         Creating a model instance with inference and guardrail configurations:
+        ```python
         >>> additional_api_config = {
         ...     "inferenceConfig": {
         ...         "maxTokens": 3000
@@ -1739,6 +1781,7 @@ class AmazonBedrockServerModel(ApiModel):
         ...     model_id='anthropic.claude-3-haiku-20240307-v1:0',
         ...     **additional_api_config
         ... )
+        ```
     """
 
     def __init__(
@@ -1771,7 +1814,7 @@ class AmazonBedrockServerModel(ApiModel):
 
     def _prepare_completion_kwargs(
         self,
-        messages: list[ChatMessage],
+        messages: list[ChatMessage | dict],
         stop_sequences: list[str] | None = None,
         response_format: dict[str, str] | None = None,
         tools_to_call_from: list[Tool] | None = None,
@@ -1824,7 +1867,7 @@ class AmazonBedrockServerModel(ApiModel):
 
     def generate(
         self,
-        messages: list[ChatMessage],
+        messages: list[ChatMessage | dict],
         stop_sequences: list[str] | None = None,
         response_format: dict[str, str] | None = None,
         tools_to_call_from: list[Tool] | None = None,
@@ -1839,7 +1882,7 @@ class AmazonBedrockServerModel(ApiModel):
             convert_images_to_image_urls=True,
             **kwargs,
         )
-
+        self._apply_rate_limit()
         # self.client is created in ApiModel class
         response = self.client.converse(**completion_kwargs)
 

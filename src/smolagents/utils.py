@@ -23,6 +23,7 @@ import json
 import keyword
 import os
 import re
+import time
 import types
 from functools import lru_cache
 from io import BytesIO
@@ -154,8 +155,8 @@ def parse_json_blob(json_blob: str) -> tuple[dict[str, str], str]:
     try:
         first_accolade_index = json_blob.find("{")
         last_accolade_index = [a.start() for a in list(re.finditer("}", json_blob))][-1]
-        json_data = json_blob[first_accolade_index : last_accolade_index + 1]
-        json_data = json.loads(json_data, strict=False)
+        json_str = json_blob[first_accolade_index : last_accolade_index + 1]
+        json_data = json.loads(json_str, strict=False)
         return json_data, json_blob[:first_accolade_index]
     except IndexError:
         raise ValueError("The model output does not contain any JSON blob.")
@@ -172,16 +173,16 @@ def parse_json_blob(json_blob: str) -> tuple[dict[str, str], str]:
         )
 
 
-def extract_code_from_text(text: str) -> str | None:
+def extract_code_from_text(text: str, code_block_tags: tuple[str, str]) -> str | None:
     """Extract code from the LLM's output."""
-    pattern = r"<code>(.*?)</code>"
+    pattern = rf"{code_block_tags[0]}(.*?){code_block_tags[1]}"
     matches = re.findall(pattern, text, re.DOTALL)
     if matches:
         return "\n\n".join(match.strip() for match in matches)
     return None
 
 
-def parse_code_blobs(text: str) -> str:
+def parse_code_blobs(text: str, code_block_tags: tuple[str, str]) -> str:
     """Extract code blocs from the LLM's output.
 
     If a valid code block is passed, it returns it directly.
@@ -195,7 +196,9 @@ def parse_code_blobs(text: str) -> str:
     Raises:
         ValueError: If no valid code block is found in the text.
     """
-    matches = extract_code_from_text(text)
+    matches = extract_code_from_text(text, code_block_tags)
+    if not matches:  # Fallback to markdown pattern
+        matches = extract_code_from_text(text, ("```(?:python|py)", "\n```"))
     if matches:
         return matches
     # Maybe the LLM outputted a code blob directly
@@ -209,27 +212,27 @@ def parse_code_blobs(text: str) -> str:
         raise ValueError(
             dedent(
                 f"""
-                Your code snippet is invalid, because the regex pattern <code>(.*?)</code> was not found in it.
+                Your code snippet is invalid, because the regex pattern {code_block_tags[0]}(.*?){code_block_tags[1]} was not found in it.
                 Here is your code snippet:
                 {text}
                 It seems like you're trying to return the final answer, you can do it as follows:
-                <code>
+                {code_block_tags[0]}
                 final_answer("YOUR FINAL ANSWER HERE")
-                </code>
+                {code_block_tags[1]}
                 """
             ).strip()
         )
     raise ValueError(
         dedent(
             f"""
-            Your code snippet is invalid, because the regex pattern <code>(.*?)</code> was not found in it.
+            Your code snippet is invalid, because the regex pattern {code_block_tags[0]}(.*?){code_block_tags[1]} was not found in it.
             Here is your code snippet:
             {text}
             Make sure to include code with the correct pattern, for instance:
             Thoughts: Your thoughts
-            <code>
+            {code_block_tags[0]}
             # Your python code here
-            </code>
+            {code_block_tags[1]}
             """
         ).strip()
     )
@@ -317,6 +320,7 @@ def instance_to_source(instance, base_cls=None):
         name: value
         for name, value in cls.__dict__.items()
         if not name.startswith("__")
+        and not name == "_abc_impl"
         and not callable(value)
         and not (base_cls and hasattr(base_cls, name) and getattr(base_cls, name) == value)
     }
@@ -498,3 +502,34 @@ with open(os.path.join(CURRENT_DIR, "prompts.yaml"), 'r') as stream:
 if __name__ == "__main__":
     GradioUI({{ agent_name }}).launch()
 """.strip()
+
+
+class RateLimiter:
+    """Simple rate limiter that enforces a minimum delay between consecutive requests.
+
+    This class is useful for limiting the rate of operations such as API requests,
+    by ensuring that calls to `throttle()` are spaced out by at least a given interval
+    based on the desired requests per minute.
+
+    If no rate is specified (i.e., `requests_per_minute` is None), rate limiting
+    is disabled and `throttle()` becomes a no-op.
+
+    Args:
+        requests_per_minute (`float | None`): Maximum number of allowed requests per minute.
+            Use `None` to disable rate limiting.
+    """
+
+    def __init__(self, requests_per_minute: float | None = None):
+        self._enabled = requests_per_minute is not None
+        self._interval = 60.0 / requests_per_minute if self._enabled else 0.0
+        self._last_call = 0.0
+
+    def throttle(self):
+        """Pause execution to respect the rate limit, if enabled."""
+        if not self._enabled:
+            return
+        now = time.time()
+        elapsed = now - self._last_call
+        if elapsed < self._interval:
+            time.sleep(self._interval - elapsed)
+        self._last_call = time.time()
