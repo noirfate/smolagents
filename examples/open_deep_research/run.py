@@ -35,6 +35,47 @@ load_dotenv(override=True)
 append_answer_lock = threading.Lock()
 
 
+_github_mcp_client = None
+_github_tools = None
+
+def get_github_tools():
+    """获取GitHub工具，如果不存在则初始化"""
+    global _github_mcp_client, _github_tools
+    
+    if not _github_mcp_client:
+        github_token = os.getenv("GITHUB_TOKEN")
+        if not github_token:
+            print("💡 未设置GITHUB_TOKEN，跳过GitHub MCP server集成")
+            _github_tools = []
+            return _github_tools
+            
+        try:
+            print("🔗 正在连接GitHub MCP server...")
+            github_mcp_config = StdioServerParameters(
+                command="docker", 
+                args=[
+                    "run", "-i", "--rm", 
+                    "-e", f"GITHUB_PERSONAL_ACCESS_TOKEN={github_token}", 
+                    "-e", "GITHUB_TOOLSETS=repos,issues,pull_requests", 
+                    "ghcr.io/github/github-mcp-server"
+                ]
+            )
+            
+            _github_mcp_client = MCPClient(github_mcp_config)
+            raw_github_tools = _github_mcp_client.get_tools()
+            
+            _github_tools = fix_github_tool_types(raw_github_tools)
+            
+            print(f"✅ GitHub MCP server已连接，获得 {len(_github_tools)} 个GitHub工具")
+            
+        except Exception as e:
+            print(f"⚠️ 连接GitHub MCP server失败: {e}")
+            print(f"   错误类型: {type(e).__name__}")
+            _github_mcp_client = None
+            _github_tools = []
+    
+    return _github_tools
+
 def fix_github_tool_types(github_tools):
     """
     GitHub MCP server 期望 JSON Schema 的 "number" 类型，但 Python 的 int 会被映射为 "integer" 类型。
@@ -65,7 +106,6 @@ def fix_github_tool_types(github_tools):
         wrapped_tools.append(GitHubToolWrapper(tool))
     
     return wrapped_tools
-
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -123,35 +163,8 @@ def create_agent(model_id="o1"):
         TextInspectorTool(model, text_limit),
     ]
     
-    # 集成GitHub MCP server
-    GITHUB_TOOLS = []
-    github_token = os.getenv("GITHUB_TOKEN")
-    github_mcp_client = None
+    GITHUB_TOOLS = get_github_tools()
 
-    if github_token:
-        try:
-            print("🔗 正在连接GitHub MCP server...")
-            # 配置GitHub MCP server - 使用远程HTTP连接
-            github_mcp_config = StdioServerParameters(
-                command="docker", 
-                args=["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN=" + github_token, "-e", "GITHUB_TOOLSETS=repos,issues,pull_requests", "ghcr.io/github/github-mcp-server"]
-            )
-            
-            # 创建MCP客户端连接到GitHub server
-            github_mcp_client = MCPClient(github_mcp_config)
-            raw_github_tools = github_mcp_client.get_tools()
-            
-            # 包装GitHub工具以修复类型问题
-            GITHUB_TOOLS = fix_github_tool_types(raw_github_tools)
-            
-            print(f"✅ GitHub MCP server已连接，获得 {len(GITHUB_TOOLS)} 个GitHub工具")
-            
-        except Exception as e:
-            print(f"⚠️ 连接GitHub MCP server失败: {e}")
-            print(f"   错误类型: {type(e).__name__}")
-            GITHUB_TOOLS = []
-
-    # 创建网络搜索agent
     text_webbrowser_agent = ToolCallingAgent(
         model=model,
         tools=WEB_TOOLS,
@@ -209,7 +222,6 @@ def create_agent(model_id="o1"):
         """
         
         managed_agents.append(github_agent)
-        print(f"🤖 已创建GitHub agent，包含 {len(GITHUB_TOOLS)} 个GitHub工具")
 
     manager_agent = CodeAgent(
         model=model,
