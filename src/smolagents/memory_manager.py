@@ -1,6 +1,11 @@
 """
 记忆管理器 - 基于Planning周期的智能记忆压缩
 利用smolagents现有的planning机制作为记忆分割点
+
+压缩策略：
+- 当有至少2个planning step时，保留最近的{action, plan}组合
+- 压缩倒数第二个planning step之前的所有历史
+- 结构：system_prompt + compressed_history + recent_{action, plan}
 """
 
 from typing import List
@@ -11,7 +16,6 @@ __all__ = [
     "MemoryManager"
 ]
 
-
 class MemoryManager:
     """轻量级记忆管理器，基于Planning周期进行记忆压缩"""
     
@@ -19,31 +23,38 @@ class MemoryManager:
         self._compressed_history = None  # 缓存压缩结果
         self._last_compressed_index = -1  # 记录上次压缩的位置
     
-    def get_last_planning_step_index(self, memory_steps: List[MemoryStep]) -> int:
-        """找到最后一个PlanningStep的位置"""
-        for i in reversed(range(len(memory_steps))):
-            if isinstance(memory_steps[i], PlanningStep):
-                return i
-        return -1
+    def get_planning_step_indices(self, memory_steps: List[MemoryStep]) -> List[int]:
+        """一次遍历获取所有PlanningStep的位置"""
+        return [i for i, step in enumerate(memory_steps) if isinstance(step, PlanningStep)]
     
-    def should_compress(self, memory_steps: List[MemoryStep], agent) -> bool:
-        """判断是否需要进行记忆压缩"""
-        last_plan_idx = self.get_last_planning_step_index(memory_steps)
+    def get_compression_split_point(self, memory_steps: List[MemoryStep]) -> int:
+        """获取压缩分割点：直接使用倒数第二个planning step的位置
         
-        # 至少要有两个planning step才考虑压缩
-        if last_plan_idx <= 0:
-            return False
+        返回分割点索引，压缩[0:split_point]，保留[split_point:]
+        保留部分从完整的planning step开始，包含最近的完整规划周期
         
-        # 如果已经压缩过，且没有新的planning step，则不需要重复压缩
-        if last_plan_idx <= self._last_compressed_index:
-            return False
+        边界情况处理：
+        - 如果倒数第二个planning step之前没有ActionStep，不进行压缩
+        - 确保压缩的部分包含完整的{action, plan}组合
+        """
+        planning_indices = self.get_planning_step_indices(memory_steps)
         
-        # 使用agent的planning_interval来判断是否有足够的历史需要压缩
-        # 如果planning_interval为None，使用默认值5
-        planning_interval = agent.planning_interval or 5
+        # 至少需要两个planning step才能找到倒数第二个
+        if len(planning_indices) < 2:
+            return -1
         
-        # 检查是否有足够的历史需要压缩（至少一个planning_interval的步数）
-        return last_plan_idx >= planning_interval
+        second_last_plan_idx = planning_indices[-2]
+        
+        # 边界情况：检查倒数第二个planning step之前是否有ActionStep
+        # 如果没有，说明没有完整的{action, plan}组合可以压缩
+        has_action_before_second_last_plan = any(
+            isinstance(step, ActionStep) for step in memory_steps[:second_last_plan_idx]
+        )
+        
+        if not has_action_before_second_last_plan:
+            return -1  # 不进行压缩
+        
+        return second_last_plan_idx
     
     def compress_historical_steps(self, historical_steps: List[MemoryStep], model) -> str:
         """将历史步骤压缩为结构化总结，失败时返回None"""
@@ -131,16 +142,15 @@ Please begin the compression summary:"""
         """带压缩功能的记忆转换方法"""
         memory_steps = agent.memory.steps
         
-        # 如果不需要压缩，使用原始方法
-        if not self.should_compress(memory_steps, agent):
+        split_point = self.get_compression_split_point(memory_steps)
+        
+        # 如果没有有效的分割点，使用原始方法
+        if split_point < 0:
             return agent._original_write_memory_to_messages(summary_mode)
         
-        last_plan_idx = self.get_last_planning_step_index(memory_steps)
-        
-        # 检查是否需要重新压缩
-        if last_plan_idx > self._last_compressed_index:
-            # 压缩上次planning之前的历史
-            historical_steps = memory_steps[:last_plan_idx]
+        if split_point > self._last_compressed_index:
+            # 压缩分割点之前的历史（保留最近的{action, plan}组合）
+            historical_steps = memory_steps[:split_point]
             compressed_result = self.compress_historical_steps(historical_steps, agent.model)
             
             # 如果压缩失败，fallback到原始方法
@@ -149,7 +159,7 @@ Please begin the compression summary:"""
                 return agent._original_write_memory_to_messages(summary_mode)
             
             self._compressed_history = compressed_result
-            self._last_compressed_index = last_plan_idx
+            self._last_compressed_index = split_point
         
         # 构建消息
         messages = []
@@ -164,8 +174,8 @@ Please begin the compression summary:"""
                 content=[{"type": "text", "text": self._compressed_history}]
             ))
         
-        # 3. 最近一个planning周期的完整记录
-        recent_steps = memory_steps[last_plan_idx:]
+        # 3. 最近的{action, plan}组合及后续记录
+        recent_steps = memory_steps[split_point:]
         for step in recent_steps:
             messages.extend(step.to_messages(summary_mode))
         
