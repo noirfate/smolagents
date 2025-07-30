@@ -24,6 +24,8 @@ from smolagents import (
     ToolCallingAgent,
     MCPClient,
     Tool,
+    MemoryCompressedToolCallingAgent, 
+    MemoryCompressedCodeAgent,
 )
 
 from mcp import StdioServerParameters
@@ -31,9 +33,6 @@ from mcp import StdioServerParameters
 
 load_dotenv(override=True)
 #login(os.getenv("HF_TOKEN"))
-
-append_answer_lock = threading.Lock()
-
 
 _github_mcp_client = None
 _github_tools = None
@@ -146,12 +145,12 @@ def create_agent(model_id="o1"):
         "api_key": os.getenv("API_KEY"),
         "base_url": os.getenv("BASE_URL")
     }
-    if model_id == "o1":
-        model_params["reasoning_effort"] = "high"
+    
     model = LiteLLMModel(**model_params)
-
+    
     text_limit = 100000
     browser = SimpleTextBrowser(**BROWSER_CONFIG)
+    
     WEB_TOOLS = [
         GoogleSearchTool(),
         VisitTool(browser),
@@ -165,7 +164,7 @@ def create_agent(model_id="o1"):
     
     GITHUB_TOOLS = get_github_tools()
 
-    text_webbrowser_agent = ToolCallingAgent(
+    text_webbrowser_agent = MemoryCompressedToolCallingAgent(
         model=model,
         tools=WEB_TOOLS,
         max_steps=20,
@@ -178,7 +177,6 @@ def create_agent(model_id="o1"):
     And don't hesitate to provide him with a complex search task, like finding a difference between two webpages.
     Your request must be a real sentence, not a google search! Like "Find me this information (...)" rather than a few keywords.
     """,
-        #provide_run_summary=True,
     )
     text_webbrowser_agent.prompt_templates["managed_agent"]["task"] += """You can navigate to .txt online files.
     If a non-html page is in another format, especially .pdf or a Youtube video, use tool 'inspect_file_as_text' to inspect it.
@@ -188,7 +186,7 @@ def create_agent(model_id="o1"):
     managed_agents = [text_webbrowser_agent]
     
     if GITHUB_TOOLS:
-        github_agent = ToolCallingAgent(
+        github_agent = MemoryCompressedToolCallingAgent(
             model=model,
             tools=GITHUB_TOOLS,
             max_steps=10,
@@ -209,7 +207,6 @@ def create_agent(model_id="o1"):
         He specializes in code analysis, repository management, and GitHub ecosystem exploration.
         Provide him with specific requests about repositories, code searches, or GitHub operations.
         """,
-            #provide_run_summary=True,
         )
         github_agent.prompt_templates["managed_agent"]["task"] += """
         When working with GitHub:
@@ -223,7 +220,7 @@ def create_agent(model_id="o1"):
         
         managed_agents.append(github_agent)
 
-    manager_agent = CodeAgent(
+    manager_agent = MemoryCompressedCodeAgent(
         model=model,
         tools=[visualizer, TextInspectorTool(model, text_limit)],
         max_steps=12,

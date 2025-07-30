@@ -7,7 +7,6 @@ import re
 from contextlib import redirect_stdout, redirect_stderr
 import gradio as gr
 from run import create_agent
-from smolagents.gradio_ui import GradioUI
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
@@ -20,7 +19,7 @@ SUPPORTED_MODELS = [
     "gpt-4.5-preview",
     "claude-sonnet-4-20250514",
     "ark-deepseek-r1-250528",
-    "gemini-2.5-pro-preview-05-06"
+    "gemini-2.5-pro"
 ]
 
 class StreamCapture:
@@ -231,20 +230,15 @@ def enable_monitoring():
 def create_research_interface():
     """创建研究界面"""
     
-    # 创建默认agent
-    current_agent = create_agent("o1")
-    current_model = "o1"
+    # 只记录模型选择，不预先创建agent
+    current_model = "gemini-2.5-pro"
     monitoring_enabled = False
     
-    def update_agent(model_id):
-        """更新Agent模型"""
-        nonlocal current_agent, current_model
-        try:
-            current_agent = create_agent(model_id)
-            current_model = model_id
-            return f"✅ 成功切换到模型: {model_id}"
-        except Exception as e:
-            return f"❌ 模型切换失败: {str(e)}"
+    def update_model_selection(model_id):
+        """更新模型选择（不创建agent）"""
+        nonlocal current_model
+        current_model = model_id
+        return f"✅ 已选择模型: {model_id}"
     
     def toggle_monitoring(enable):
         """切换监控状态"""
@@ -270,15 +264,20 @@ def create_research_interface():
         monitoring_status = toggle_monitoring(enable_monitoring_flag)
         status_html = f'<div class="terminal-output"><pre>🔧 系统状态: {monitoring_status}\n\n'
         
-        # 如果模型改变了，更新agent
+        # 更新当前选择的模型（如果不同）
         if model_id != current_model:
-            status_html += f'🔄 切换模型: 正在切换到 {model_id}...\n\n'
-            update_result = update_agent(model_id)
-            if "❌" in update_result:
-                status_html += f'❌ 错误: {update_result}</pre></div>'
-                yield (status_html, f'<div class="result-display error">❌ 模型切换失败: {update_result}</div>')
-                return
-            status_html += f'✅ 模型已切换: {update_result}\n\n'
+            update_model_selection(model_id)
+            status_html += f'🔄 使用模型: {model_id}\n\n'
+        
+        # 现在创建agent（只在真正需要时创建）
+        status_html += f'🤖 正在创建Agent ({model_id})...\n'
+        try:
+            current_agent = create_agent(model_id)
+            status_html += f'✅ Agent创建成功\n\n'
+        except Exception as e:
+            status_html += f'❌ Agent创建失败: {str(e)}</pre></div>'
+            yield (status_html, f'<div class="result-display error">❌ Agent创建失败: {str(e)}</div>')
+            return
         
         # 创建输出捕获器
         capture = StreamCapture()
@@ -517,7 +516,7 @@ def create_research_interface():
                 # 模型选择
                 model_selector = gr.Dropdown(
                     choices=SUPPORTED_MODELS,
-                    value="o1",
+                    value=f"{current_model}",
                     label="🤖 选择AI模型",
                     info="不同模型有不同的特点和能力"
                 )
@@ -538,7 +537,7 @@ def create_research_interface():
                 gr.Markdown("### 📊 系统状态")
                 status_display = gr.Textbox(
                     label="当前状态",
-                    value=f"✅ 已准备就绪 | 当前模型: o1",
+                    value=f"✅ 已准备就绪 | 当前模型: {current_model}",
                     interactive=False,
                     lines=2
                 )
@@ -546,14 +545,10 @@ def create_research_interface():
                 # 功能说明
                 gr.Markdown("""
                 ### 🚀 功能特点
-                - 📋 **双层显示**: 简洁结果区 + 详细过程区
-                - 🎨 **终端模拟**: 完整保留终端颜色和格式
-                - 🌐 **网络搜索**: 实时获取最新信息
-                - 📊 **数据分析**: 智能处理和分析数据  
-                - 📈 **可视化**: 自动生成图表和报告
+                - 🌐 **智能搜索**: 自动搜索和分析网络信息
+                - 📊 **GitHub集成**: 查询代码仓库和技术信息  
                 - 🤖 **多模型**: 支持多种AI模型
-                - 🧠 **深度推理**: 逐步分析复杂问题
-                - 🔍 **可折叠**: 保持界面简洁美观
+                - 🧠 **记忆压缩**: 基于Planning周期的智能记忆管理
                 """)
         
         # 最终结果显示区域
@@ -584,7 +579,7 @@ def create_research_interface():
         )
         
         model_selector.change(
-            fn=update_agent,
+            fn=lambda model_id: update_model_selection(model_id),
             inputs=[model_selector],
             outputs=[status_display],
             show_progress=True
@@ -599,9 +594,6 @@ def create_research_interface():
             outputs=[question_input, process_output, final_result_output]
         )
         
-
-
-    
     return demo
 
 def main():
