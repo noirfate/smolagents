@@ -1,9 +1,7 @@
 import argparse
 import os
-import threading
 
 from dotenv import load_dotenv
-from huggingface_hub import login
 from scripts.text_inspector_tool import TextInspectorTool
 from scripts.text_web_browser import (
     ArchiveSearchTool,
@@ -17,94 +15,36 @@ from scripts.text_web_browser import (
 from scripts.visual_qa import visualizer
 
 from smolagents import (
-    CodeAgent,
     GoogleSearchTool,
-    # InferenceClientModel,
     LiteLLMModel,
-    ToolCallingAgent,
-    MCPClient,
-    Tool,
     MemoryCompressedToolCallingAgent, 
     MemoryCompressedCodeAgent,
+    GitHubTools,
 )
 
-from mcp import StdioServerParameters
-
-
 load_dotenv(override=True)
-#login(os.getenv("HF_TOKEN"))
 
-_github_mcp_client = None
-_github_tools = None
+# GitHub工具现在由GitHubTools类统一管理
+_github_tools_instance = None
 
 def get_github_tools():
-    """获取GitHub工具，如果不存在则初始化"""
-    global _github_mcp_client, _github_tools
+    """获取GitHub工具实例的工具列表"""
+    global _github_tools_instance
     
-    if not _github_mcp_client:
+    if _github_tools_instance is None:
         github_token = os.getenv("GITHUB_TOKEN")
         if not github_token:
             print("💡 未设置GITHUB_TOKEN，跳过GitHub MCP server集成")
-            _github_tools = []
-            return _github_tools
-            
-        try:
-            print("🔗 正在连接GitHub MCP server...")
-            github_mcp_config = StdioServerParameters(
-                command="docker", 
-                args=[
-                    "run", "-i", "--rm", 
-                    "-e", f"GITHUB_PERSONAL_ACCESS_TOKEN={github_token}", 
-                    "-e", "GITHUB_TOOLSETS=repos,issues,pull_requests", 
-                    "ghcr.io/github/github-mcp-server"
-                ]
-            )
-            
-            _github_mcp_client = MCPClient(github_mcp_config)
-            raw_github_tools = _github_mcp_client.get_tools()
-            
-            _github_tools = fix_github_tool_types(raw_github_tools)
-            
-            print(f"✅ GitHub MCP server已连接，获得 {len(_github_tools)} 个GitHub工具")
-            
-        except Exception as e:
-            print(f"⚠️ 连接GitHub MCP server失败: {e}")
-            print(f"   错误类型: {type(e).__name__}")
-            _github_mcp_client = None
-            _github_tools = []
-    
-    return _github_tools
-
-def fix_github_tool_types(github_tools):
-    """
-    GitHub MCP server 期望 JSON Schema 的 "number" 类型，但 Python 的 int 会被映射为 "integer" 类型。
-    """
-    wrapped_tools = []
-    
-    for tool in github_tools:
-        class GitHubToolWrapper(Tool):
-            skip_forward_signature_validation = True  # 跳过签名验证
-            
-            def __init__(self, original_tool):
-                self.original_tool = original_tool
-                self.name = original_tool.name
-                self.description = original_tool.description
-                self.inputs = original_tool.inputs.copy()
-                self.output_type = original_tool.output_type
-                self.is_initialized = True
-                
-                # 修改 inputs 定义，将 number 类型改为 integer，避免类型验证错误
-                for key, input_def in self.inputs.items():
-                    if input_def.get("type") == "number":
-                        self.inputs[key] = input_def.copy()
-                        self.inputs[key]["type"] = "integer"
-                
-            def forward(self, *args, **kwargs):
-                return self.original_tool(*args, **kwargs)
+            return []
         
-        wrapped_tools.append(GitHubToolWrapper(tool))
+        try:
+            _github_tools_instance = GitHubTools(github_token)
+            return _github_tools_instance.tools
+        except Exception as e:
+            print(f"⚠️ 创建GitHub工具实例失败: {e}")
+            return []
     
-    return wrapped_tools
+    return _github_tools_instance.tools
 
 def parse_args():
     parser = argparse.ArgumentParser()
