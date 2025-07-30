@@ -1,4 +1,5 @@
 import argparse
+import atexit
 import os
 
 from dotenv import load_dotenv
@@ -20,6 +21,8 @@ from smolagents import (
     MemoryCompressedToolCallingAgent, 
     MemoryCompressedCodeAgent,
     GitHubTools,
+    GoalDriftCallback,
+    PlanningStep,
 )
 
 load_dotenv(override=True)
@@ -160,6 +163,9 @@ def create_agent(model_id="o1"):
         
         managed_agents.append(github_agent)
 
+    # 创建目标偏离检测回调
+    goal_drift_detector = GoalDriftCallback()
+    
     manager_agent = MemoryCompressedCodeAgent(
         model=model,
         tools=[visualizer, TextInspectorTool(model, text_limit)],
@@ -168,6 +174,9 @@ def create_agent(model_id="o1"):
         additional_authorized_imports=["*"],
         planning_interval=4,
         managed_agents=managed_agents,
+        step_callbacks={
+            PlanningStep: goal_drift_detector  # 在每个规划步骤后检测目标偏离
+        },
     )
 
     return manager_agent

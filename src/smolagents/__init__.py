@@ -21,6 +21,7 @@ from .agents import *  # Above noqa avoids a circular dependency due to cli.py
 from .default_tools import *
 from .enhanced_memory_agents import *
 from .github_tools import *
+from .goal_drift_callback import *
 from .gradio_ui import *
 from .local_python_executor import *
 from .mcp_client import *
