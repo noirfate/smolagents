@@ -280,7 +280,7 @@ def create_research_interface():
         # 现在创建agent（只在真正需要时创建）
         status_html += f'🤖 正在创建Agent ({model_id}, max_steps={max_steps})...\n'
         try:
-            current_agent = create_agent(model_id, max_steps)
+            current_agent = create_agent(model_id, max_steps, use_browser=True)  # 默认启用浏览器功能
             status_html += f'✅ Agent创建成功\n\n'
         except Exception as e:
             status_html += f'❌ Agent创建失败: {str(e)}</pre></div>'
@@ -561,6 +561,7 @@ def create_research_interface():
                 gr.Markdown("""
                 ### 🚀 功能特点
                 - 🌐 **智能搜索**: 自动搜索和分析网络信息
+                - 🔥 **真实浏览器**: 使用Chrome浏览器执行JS，获取纯文本内容
                 - 📊 **GitHub集成**: 查询代码仓库和技术信息  
                 - 💻 **代码执行**: 专门的Python代码编写和执行agent
                 - 🤖 **多模型**: 支持多种AI模型

@@ -18,6 +18,108 @@ from smolagents import Tool
 from .cookies import COOKIES
 from .mdconvert import FileConversionException, MarkdownConverter, UnsupportedFormatException
 
+try:
+    from selenium import webdriver
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.chrome.options import Options as ChromeOptions
+    from selenium.common.exceptions import WebDriverException, TimeoutException
+    SELENIUM_AVAILABLE = True
+except ImportError:
+    SELENIUM_AVAILABLE = False
+
+
+class BrowserManager:
+    """管理Selenium WebDriver浏览器实例，避免重复启动"""
+    
+    def __init__(self):
+        self.driver = None
+        self._is_initialized = False
+    
+    def get_driver(self):
+        """获取浏览器driver实例，如果不存在则创建"""
+        if not SELENIUM_AVAILABLE:
+            raise ImportError("Selenium not available. Install with: pip install selenium")
+        
+        if self.driver is None or not self._is_driver_alive():
+            self._create_driver()
+        return self.driver
+    
+    def _create_driver(self):
+        """创建新的Chrome WebDriver实例"""
+        try:
+            chrome_options = ChromeOptions()
+            chrome_options.add_argument("--headless")  # 无头模式
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
+            chrome_options.add_argument("--disable-gpu")
+            chrome_options.add_argument("--window-size=1920,1080")
+            chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
+            
+            self.driver = webdriver.Chrome(options=chrome_options)
+            self.driver.set_page_load_timeout(90)
+            self._is_initialized = True
+        except Exception as e:
+            print(f"Warning: Failed to create browser driver: {e}")
+            self.driver = None
+            self._is_initialized = False
+    
+    def _is_driver_alive(self):
+        """检查driver是否还活着"""
+        if self.driver is None:
+            return False
+        try:
+            self.driver.current_url
+            return True
+        except:
+            return False
+    
+    def get_page_text(self, url: str, timeout: int = 10) -> tuple[str, str]:
+        """
+        使用浏览器获取页面的纯文本内容
+        返回: (页面标题, 页面文本内容)
+        """
+        driver = self.get_driver()
+        if driver is None:
+            raise Exception("Unable to create browser driver")
+        
+        try:
+            driver.get(url)
+            
+            # 等待页面加载完成
+            driver.implicitly_wait(timeout)
+            
+            # 获取页面标题
+            title = driver.title or "Untitled Page"
+            
+            # 使用JavaScript获取页面的纯文本内容
+            text_content = driver.execute_script("""
+                return document.body.innerText;
+            """)
+            
+            return title, text_content
+            
+        except TimeoutException:
+            return "Timeout", f"Page loading timeout for {url}"
+        except WebDriverException as e:
+            return "Error", f"Browser error when loading {url}: {str(e)}"
+        except Exception as e:
+            return "Error", f"Unexpected error when loading {url}: {str(e)}"
+    
+    def close(self):
+        """关闭浏览器"""
+        if self.driver:
+            try:
+                self.driver.quit()
+            except:
+                pass  # 忽略关闭时的错误
+            finally:
+                self.driver = None
+                self._is_initialized = False
+
+
+# 全局browser管理器实例
+_browser_manager = BrowserManager()
+
 
 class SimpleTextBrowser:
     """(In preview) An extremely simple text-based web browser comparable to Lynx. Suitable for Agentic use."""
@@ -29,6 +131,7 @@ class SimpleTextBrowser:
         downloads_folder: str | None | None = None,
         serpapi_key: str | None | None = None,
         request_kwargs: dict[str, Any] | None | None = None,
+        use_browser_for_text: bool = True,  # 是否对文本内容使用真正的浏览器
     ):
         self.start_page: str = start_page if start_page else "about:blank"
         self.viewport_size = viewport_size  # Applies only to the standard uri types
@@ -43,9 +146,18 @@ class SimpleTextBrowser:
         self.request_kwargs["cookies"] = COOKIES
         self._mdconvert = MarkdownConverter()
         self._page_content: str = ""
+        self.use_browser_for_text = use_browser_for_text  # 是否对文本内容使用真正的浏览器
 
         self._find_on_page_query: str | None = None
         self._find_on_page_last_result: int | None = None  # Location of the last result
+    
+    def __del__(self):
+        """析构时关闭浏览器（如果有的话）"""
+        if hasattr(self, 'use_browser_for_text') and self.use_browser_for_text:
+            try:
+                _browser_manager.close()
+            except:
+                pass  # 忽略关闭时的错误
 
     @property
     def address(self) -> str:
@@ -282,9 +394,16 @@ class SimpleTextBrowser:
 
                 # Text or HTML
                 if "text/" in content_type.lower():
-                    res = self._mdconvert.convert_response(response)
-                    self.page_title = res.title
-                    self._set_page_content(res.text_content)
+                    # 如果启用了真正的浏览器，则使用浏览器获取
+                    if (self.use_browser_for_text and SELENIUM_AVAILABLE):
+                        title, text_content = _browser_manager.get_page_text(url)
+                        self.page_title = title
+                        self._set_page_content(text_content)
+                    else:
+                        # 使用原有的方法处理非HTML内容或禁用浏览器时
+                        res = self._mdconvert.convert_response(response)
+                        self.page_title = res.title
+                        self._set_page_content(res.text_content)
                 # A download
                 else:
                     # Try producing a safe filename

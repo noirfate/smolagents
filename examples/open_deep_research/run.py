@@ -66,6 +66,11 @@ def parse_args():
         action="store_true", 
         help="启用Phoenix监控，查看LLM输入输出 (需要安装phoenix和openinference相关包)"
     )
+    parser.add_argument(
+        "--disable-browser", 
+        action="store_true", 
+        help="禁用真正的浏览器，改用传统的HTML解析（避免安装selenium依赖）"
+    )
     return parser.parse_args()
 
 
@@ -81,12 +86,13 @@ BROWSER_CONFIG = {
         "timeout": 300,
     },
     "serpapi_key": os.getenv("SERPAPI_API_KEY"),
+    "use_browser_for_text": True,  # 启用真正的浏览器来获取HTML页面文本内容
 }
 
 os.makedirs(f"./{BROWSER_CONFIG['downloads_folder']}", exist_ok=True)
 
 
-def create_agent(model_id="gemini-2.5-pro", max_steps=20):
+def create_agent(model_id="gemini-2.5-pro", max_steps=20, use_browser=True):
     model_params = {
         "model_id": f"litellm_proxy/{model_id}",
         "custom_role_conversions": custom_role_conversions,
@@ -98,7 +104,9 @@ def create_agent(model_id="gemini-2.5-pro", max_steps=20):
     model = LiteLLMModel(**model_params)
     
     text_limit = 100000
-    browser = SimpleTextBrowser(**BROWSER_CONFIG)
+    browser_config = BROWSER_CONFIG.copy()
+    browser_config["use_browser_for_text"] = use_browser
+    browser = SimpleTextBrowser(**browser_config)
     
     WEB_TOOLS = [
         GoogleSearchTool(),
@@ -267,8 +275,24 @@ def main():
         print("💡 提示：设置GITHUB_TOKEN环境变量可启用GitHub集成功能")
         print("   可以创建issues、搜索代码、分析仓库等")
         print("   创建GitHub Personal Access Token: https://github.com/settings/tokens")
+    
+    # 检查浏览器功能状态
+    if args.disable_browser:
+        print("📄 浏览器功能已禁用，将使用传统HTML解析")
+    else:
+        try:
+            from selenium import webdriver
+            print("🌐 真正的浏览器功能已启用，将使用Chrome获取页面文本内容")
+            print("   这将提供更好的JS渲染支持和更清晰的文本提取")
+        except ImportError:
+            print("⚠️ Selenium未安装，将回退到传统HTML解析")
+            print("   安装Selenium以获得更好的网页浏览体验: pip install selenium")
 
-    agent = create_agent(model_id=args.model_id, max_steps=args.max_steps)
+    agent = create_agent(
+        model_id=args.model_id, 
+        max_steps=args.max_steps, 
+        use_browser=not args.disable_browser
+    )
 
     answer = agent.run(args.question)
 
