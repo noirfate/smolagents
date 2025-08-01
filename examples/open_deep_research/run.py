@@ -121,7 +121,7 @@ def create_agent(model_id="gemini-2.5-pro", max_steps=20, use_browser=True):
     
     GITHUB_TOOLS = get_github_tools()
 
-    text_webbrowser_agent = MemoryCompressedToolCallingAgent(
+    text_webbrowser_agent = MemoryCompressedCodeAgent(
         model=model,
         tools=WEB_TOOLS,
         max_steps=max_steps,
@@ -143,7 +143,7 @@ def create_agent(model_id="gemini-2.5-pro", max_steps=20, use_browser=True):
     managed_agents = [text_webbrowser_agent]
     
     if GITHUB_TOOLS:
-        github_agent = MemoryCompressedToolCallingAgent(
+        github_agent = MemoryCompressedCodeAgent(
             model=model,
             tools=GITHUB_TOOLS,
             max_steps=max_steps,
