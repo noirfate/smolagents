@@ -232,7 +232,7 @@ def create_agent(model_id="gemini-2.5-pro", max_steps=20, use_browser=True):
     # 创建目标偏离检测回调
     goal_drift_detector = GoalDriftCallback()
     
-    manager_agent = MemoryCompressedCodeAgent(
+    manager_agent = MemoryCompressedToolCallingAgent(
         model=model,
         tools=[visualizer, TextInspectorTool(model, text_limit)],
         max_steps=max_steps,
