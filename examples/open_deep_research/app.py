@@ -253,12 +253,20 @@ def create_research_interface():
             monitoring_enabled = False
             return "📝 监控已禁用"
     
-    def run_research_stream(question, model_id, enable_monitoring_flag):
+    def run_research_stream(question, model_id, max_steps, enable_monitoring_flag):
         """流式执行研究任务"""
         if not question.strip():
             yield ('<div class="terminal-output"><pre><span style="color: #e5e7eb;">请输入研究问题</span></pre></div>', 
                    '<div class="result-display">请输入研究问题开始</div>')
             return
+        
+        # 确保max_steps是有效的正整数
+        try:
+            max_steps = int(max_steps) if max_steps else 20
+            if max_steps <= 0:
+                max_steps = 20
+        except (ValueError, TypeError):
+            max_steps = 20
         
         # 处理监控状态
         monitoring_status = toggle_monitoring(enable_monitoring_flag)
@@ -270,9 +278,9 @@ def create_research_interface():
             status_html += f'🔄 使用模型: {model_id}\n\n'
         
         # 现在创建agent（只在真正需要时创建）
-        status_html += f'🤖 正在创建Agent ({model_id})...\n'
+        status_html += f'🤖 正在创建Agent ({model_id}, max_steps={max_steps})...\n'
         try:
-            current_agent = create_agent(model_id)
+            current_agent = create_agent(model_id, max_steps)
             status_html += f'✅ Agent创建成功\n\n'
         except Exception as e:
             status_html += f'❌ Agent创建失败: {str(e)}</pre></div>'
@@ -521,6 +529,13 @@ def create_research_interface():
                     info="不同模型有不同的特点和能力"
                 )
                 
+                # 最大步数设置
+                max_steps_input = gr.Number(
+                    value=20,
+                    label="⚙️ 最大执行步数",
+                    info="Agent执行的最大步数，数值越大能处理更复杂任务但耗时更长"
+                )
+                
                 # 监控开关
                 monitoring_checkbox = gr.Checkbox(
                     label="🔍 启用Phoenix监控",
@@ -547,7 +562,9 @@ def create_research_interface():
                 ### 🚀 功能特点
                 - 🌐 **智能搜索**: 自动搜索和分析网络信息
                 - 📊 **GitHub集成**: 查询代码仓库和技术信息  
+                - 💻 **代码执行**: 专门的Python代码编写和执行agent
                 - 🤖 **多模型**: 支持多种AI模型
+                - ⚙️ **可调步数**: 灵活设置Agent执行步数
                 - 🧠 **记忆压缩**: 基于Planning周期的智能记忆管理
                 """)
         
@@ -573,7 +590,7 @@ def create_research_interface():
         # 事件绑定
         research_btn.click(
             fn=run_research_stream,
-            inputs=[question_input, model_selector, monitoring_checkbox],
+            inputs=[question_input, model_selector, max_steps_input, monitoring_checkbox],
             outputs=[process_output, final_result_output],
             show_progress=True
         )

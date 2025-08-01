@@ -54,7 +54,13 @@ def parse_args():
     parser.add_argument(
         "question", type=str, help="for example: 'How many studio albums did Mercedes Sosa release before 2007?'"
     )
-    parser.add_argument("--model-id", type=str, default="o1")
+    parser.add_argument("--model-id", type=str, default="gemini-2.5-pro")
+    parser.add_argument(
+        "--max-steps", 
+        type=int, 
+        default=20, 
+        help="设置Agent的最大执行步数，默认为20"
+    )
     parser.add_argument(
         "--enable-monitoring", 
         action="store_true", 
@@ -80,7 +86,7 @@ BROWSER_CONFIG = {
 os.makedirs(f"./{BROWSER_CONFIG['downloads_folder']}", exist_ok=True)
 
 
-def create_agent(model_id="o1"):
+def create_agent(model_id="gemini-2.5-pro", max_steps=20):
     model_params = {
         "model_id": f"litellm_proxy/{model_id}",
         "custom_role_conversions": custom_role_conversions,
@@ -110,7 +116,7 @@ def create_agent(model_id="o1"):
     text_webbrowser_agent = MemoryCompressedToolCallingAgent(
         model=model,
         tools=WEB_TOOLS,
-        max_steps=20,
+        max_steps=max_steps,
         verbosity_level=2,
         planning_interval=4,
         name="search_agent",
@@ -132,7 +138,7 @@ def create_agent(model_id="o1"):
         github_agent = MemoryCompressedToolCallingAgent(
             model=model,
             tools=GITHUB_TOOLS,
-            max_steps=10,
+            max_steps=max_steps,
             verbosity_level=2,
             planning_interval=3,
             name="github_agent",
@@ -163,15 +169,66 @@ def create_agent(model_id="o1"):
         
         managed_agents.append(github_agent)
 
+    # 创建专门的代码执行agent
+    code_agent = MemoryCompressedCodeAgent(
+        model=model,
+        tools=[],
+        max_steps=max_steps,
+        verbosity_level=2,
+        additional_authorized_imports=["*"],
+        planning_interval=3,
+        name="code_agent", 
+        description="""A specialized team member for writing and executing Python code to solve problems.
+    Ask him for tasks that require:
+    - Data analysis and processing
+    - Mathematical calculations and computations
+    - File operations and data manipulation
+    - Visualization and plotting
+    - Algorithm implementation
+    - Scientific computing tasks
+    - Any task that can be solved by writing and running Python code
+    
+    He can write, execute and debug Python code to provide solutions and results.
+    Provide him with clear requirements about what you want to accomplish with code.
+    """,
+    )
+    code_agent.prompt_templates["managed_agent"]["task"] += """
+    When writing code:
+    - Write clean, well-commented Python code
+    - Handle errors gracefully with try-catch blocks
+    - Use appropriate libraries for the task
+    - Provide clear output and explanations
+    
+    IMPORTANT CODE EXECUTION RULES:
+    1. **Library Installation**: If you need to import a library that might not be installed, 
+       first try to install it using pip. For example:
+       ```python
+       try:
+           import pandas as pd
+       except ImportError:
+           import subprocess
+           subprocess.check_call(['pip', 'install', 'pandas'])
+           import pandas as pd
+       ```
+    
+    2. **Avoid __name__ Usage**: NEVER use `__name__` in your code as it's not supported 
+       by the local Python executor. This means:
+       - ❌ DON'T write: `if __name__ == '__main__':`
+       - ❌ DON'T use: `print(__name__)`
+       - ✅ DO write: Execute code directly without name checks
+       - ✅ DO organize: Use functions and call them directly
+    """
+    
+    managed_agents.append(code_agent)
+
     # 创建目标偏离检测回调
     goal_drift_detector = GoalDriftCallback()
     
-    manager_agent = MemoryCompressedCodeAgent(
+    manager_agent = MemoryCompressedToolCallingAgent(
         model=model,
         tools=[visualizer, TextInspectorTool(model, text_limit)],
-        max_steps=12,
+        max_steps=max_steps,
         verbosity_level=2,
-        additional_authorized_imports=["*"],
         planning_interval=4,
         managed_agents=managed_agents,
         step_callbacks={
@@ -211,7 +268,7 @@ def main():
         print("   可以创建issues、搜索代码、分析仓库等")
         print("   创建GitHub Personal Access Token: https://github.com/settings/tokens")
 
-    agent = create_agent(model_id=args.model_id)
+    agent = create_agent(model_id=args.model_id, max_steps=args.max_steps)
 
     answer = agent.run(args.question)
 
