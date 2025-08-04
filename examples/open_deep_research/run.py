@@ -1,5 +1,4 @@
 import argparse
-import atexit
 import os
 
 from dotenv import load_dotenv
@@ -125,6 +124,7 @@ def create_agent(model_id="gemini-2.5-pro", max_steps=20, use_browser=True):
         model=model,
         tools=WEB_TOOLS,
         max_steps=max_steps,
+        additional_authorized_imports=["*"],
         verbosity_level=2,
         planning_interval=4,
         name="search_agent",
@@ -147,19 +147,19 @@ def create_agent(model_id="gemini-2.5-pro", max_steps=20, use_browser=True):
             model=model,
             tools=GITHUB_TOOLS,
             max_steps=max_steps,
+            additional_authorized_imports=["*"],
             verbosity_level=2,
             planning_interval=3,
             name="github_agent",
             description="""A specialized team member for GitHub operations and code repository analysis.
         Ask him for all your questions related to GitHub and code repositories.
+        your request must contain the repository name or commit hash or issue number or pull request number or user name.
         He can:
         - Search GitHub repositories and code
-        - Create and manage GitHub issues and pull requests
         - Analyze repository information and statistics
         - Retrieve and analyze commit history
         - Search for code patterns and implementations
         - Analyze repository structures and dependencies
-        - Find popular repositories and trending projects
         
         He specializes in code analysis, repository management, and GitHub ecosystem exploration.
         Provide him with specific requests about repositories, code searches, or GitHub operations.
@@ -167,7 +167,7 @@ def create_agent(model_id="gemini-2.5-pro", max_steps=20, use_browser=True):
         )
         github_agent.prompt_templates["managed_agent"]["task"] += """
         When working with GitHub:
-        - Be specific about repository names and owners when known
+        - Be specific about repository names and owners or commit hashes when known
         - Use appropriate search terms for code and repository searches
         - Consider repository popularity, activity, and maintenance status
         - Analyze code quality, documentation, and community engagement
