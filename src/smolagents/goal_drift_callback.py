@@ -1,34 +1,23 @@
 """
-基于step_callback的实时目标偏离检测
-只对update plan进行检测（跳过initial plan），如果偏离则自动纠正
+基于 step_callback 的实时目标偏离检测。
 """
 
 from typing import Optional
 from .models import ChatMessage, MessageRole
-from .memory import PlanningStep, TaskStep, ActionStep
+from .memory import PlanningStep, ActionStep
 
 __all__ = ["GoalDriftCallback"]
 
 class GoalDriftCallback:
     def __init__(self):
-        self.initial_request: Optional[str] = None
-        
+        pass
+
     def __call__(self, memory_step, agent):
-        """step_callback接口，在PlanningStep完成后调用"""
+        """step_callback 接口：在 PlanningStep 完成后调用"""
         if isinstance(memory_step, PlanningStep):
-            if self.initial_request is None:
-                self.initial_request = self._extract_initial_request(agent)
-            
-            # 只检测update plan，跳过initial plan
-            if self.initial_request and self._is_update_plan(agent):
+            # 只检测 update plan，跳过 initial plan
+            if self._is_update_plan(agent):
                 self._check_and_correct_drift(memory_step, agent)
-    
-    def _extract_initial_request(self, agent) -> Optional[str]:
-        """从agent记忆中提取用户初始请求"""
-        for step in agent.memory.steps:
-            if isinstance(step, TaskStep):
-                return step.task
-        return None
     
     def _is_update_plan(self, agent) -> bool:
         """判断当前是否为update plan（已有ActionStep执行记录）"""
@@ -38,14 +27,17 @@ class GoalDriftCallback:
         return False
     
     def _check_and_correct_drift(self, planning_step: PlanningStep, agent):
-        """检测目标偏离并自动纠正"""
+        """检测目标偏离并自动纠正，基于当前 agent.task 作为请求"""
         current_plan = planning_step.plan
-        
-        # 构建偏离检测prompt
+        request = getattr(agent, "task", None)
+        if not request:
+            return
+
+        # 构建偏离检测 prompt
         prompt = f"""You are analyzing whether an AI agent's current plan has drifted from the user's original request.
 
 **User's Original Request:**
-{self.initial_request}
+{request}
 
 **Agent's Current Plan:**
 {current_plan}
@@ -81,10 +73,10 @@ CORRECTED_PLAN: [Only if STATUS is DRIFTED - provide the corrected plan here]
         try:
             messages = [ChatMessage(role=MessageRole.USER, content=prompt)]
             response = agent.model.generate(messages)
-            
+
             if response.content:
                 self._process_result(response.content, planning_step)
-                
+
         except Exception as e:
             print(f"⚠️ 目标偏离检测失败: {e}")
     

@@ -70,6 +70,11 @@ def parse_args():
         action="store_true", 
         help="禁用真正的浏览器，改用传统的HTML解析（避免安装selenium依赖）"
     )
+    parser.add_argument(
+        "--chat",
+        action="store_true",
+        help="进入多轮对话模式：在初次回答后继续与Agent对话，输入 exit/quit 退出，会话内保持上下文（reset=False）",
+    )
     return parser.parse_args()
 
 
@@ -262,7 +267,6 @@ def main():
             print("✅ 监控插桩已启用")
         except ImportError as e:
             print(f"❌ 无法启用监控功能，缺少依赖包: {e}")
-            print("请安装: pip install 'arize-phoenix[evals]' openinference-instrumentation-smolagents")
             return
     else:
         print("📝 监控功能已禁用，如需启用请添加 --enable-monitoring 参数")
@@ -294,9 +298,37 @@ def main():
         use_browser=not args.disable_browser
     )
 
+    # 首次问题
     answer = agent.run(args.question)
-
     print(f"Got this answer: {answer}")
+
+    # 多轮对话模式：在同一Agent实例上继续追问（reset=False 保留上下文记忆）
+    if args.chat:
+        print("\n🗣 进入对话模式。提示：输入 'exit' 或 'quit' 退出，会话内输入 '/reset' 可清空历史记忆。\n")
+        while True:
+            try:
+                user_input = input("user>: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\n👋 退出对话模式。")
+                break
+
+            if not user_input:
+                continue
+
+            lower_input = user_input.lower()
+            if lower_input in ("exit", "quit", "q"):
+                print("👋 退出对话模式。")
+                break
+
+            if user_input.startswith("/reset"):
+                # 清空记忆但保留系统提示
+                agent.memory.reset()
+                print("♻️ 已清空会话历史记忆。")
+                continue
+
+            # 继续在同一会话中运行，保留上下文
+            follow_up_answer = agent.run(user_input, reset=False, max_steps=args.max_steps)
+            print(f"Agent: {follow_up_answer}")
 
 
 if __name__ == "__main__":
