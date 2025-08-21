@@ -116,12 +116,18 @@ class SmolAgentsAdapter(ToolAdapter):
                         text_contents = [content.text for content in mcp_output.content]
                         return "\n".join(text_contents)
                     else:
-                        # Mixed content types, use first one
-                        logger.warning(
-                            f"tool {self.name} returned multiple mixed content, using the first one"
-                        )
+                        # Prefer resource content (e.g., file contents) over status text if mixed
+                        resource_contents = [c for c in mcp_output.content if isinstance(c, mcp.types.ResourceContent)]
+                        if len(resource_contents) > 0:
+                            content = resource_contents[0]
+                        else:
+                            # Mixed content types without resources, use first one
+                            logger.warning(
+                                f"tool {self.name} returned multiple mixed content, using the first one"
+                            )
 
-                content = mcp_output.content[0]
+                # If not set by the mixed-content handler above, default to first content
+                content = content if 'content' in locals() else mcp_output.content[0]
 
                 if isinstance(content, mcp.types.TextContent):
                     return content.text
@@ -132,6 +138,23 @@ class SmolAgentsAdapter(ToolAdapter):
                     image_data = base64.b64decode(content.data)
                     image = Image.open(BytesIO(image_data))
                     return image
+
+                # Support for MCP ResourceContent (e.g., GitHub MCP get_file_contents)
+                if hasattr(mcp.types, "ResourceContent") and isinstance(content, mcp.types.ResourceContent):
+                    # Many MCP servers (e.g., GitHub) embed file text directly in the resource
+                    # Prefer returning the text if present; otherwise, fall back to a descriptive string
+                    try:
+                        resource = content.resource
+                        text = getattr(resource, "text", None)
+                        if isinstance(text, str) and len(text) > 0:
+                            return text
+                        # If there is no text, return a structured hint including the uri
+                        uri = getattr(resource, "uri", None)
+                        mime = getattr(resource, "mimeType", None)
+                        return f"[resource]{f' uri={uri}' if uri else ''}{f' mime={mime}' if mime else ''}: no inline text present"
+                    except Exception as e:
+                        logger.warning(f"failed to parse ResourceContent: {e}")
+                        return "[resource]: failed to extract content"
 
                 if isinstance(content, mcp.types.AudioContent):
                     if not _is_package_available("torchaudio"):
