@@ -20,6 +20,7 @@ from .agent_types import *  # noqa: I001
 from .agents import *  # Above noqa avoids a circular dependency due to cli.py
 from .default_tools import *
 from .enhanced_memory_agents import *
+from .filesystem_tools import *
 from .github_tools import *
 from .goal_drift_callback import *
 from .gradio_ui import *
