@@ -17,6 +17,7 @@ from smolagents import (
     ListDirectoryTool,
     ReadFileTool,
     WriteFileTool,
+    EditFileTool,
     FileSearchTool,
     FileContentSearchTool,
 )
@@ -41,6 +42,7 @@ def create_filesystem_agent(model_id="gpt-4o", max_steps=15):
         ListDirectoryTool(),      # 列出目录内容
         ReadFileTool(),           # 读取文件
         WriteFileTool(),          # 写入文件
+        EditFileTool(),           # 编辑文件
         FileSearchTool(),         # 搜索文件
         FileContentSearchTool(),  # 搜索文件内容
     ]
@@ -60,15 +62,17 @@ def create_filesystem_agent(model_id="gpt-4o", max_steps=15):
 1. 📁 浏览和列出目录内容
 2. 📖 读取文件内容
 3. ✏️ 创建和写入文件
-4. 🔍 按文件名搜索文件
-5. 🔎 在文件内容中搜索文本
-6. 📊 分析目录结构
-7. 🗂️ 批量处理文件操作
-8. 📋 生成文件清单和报告
+4. ✂️ 编辑现有文件（通过内容匹配和替换）
+5. 🔍 按文件名搜索文件
+6. 🔎 在文件内容中搜索文本
+7. 📊 分析目录结构
+8. 🗂️ 批量处理文件操作
+9. 📋 生成文件清单和报告
 
 支持的文件操作包括但不限于：
 - 目录浏览和文件列表
-- 文本文件读写
+- 文本文件读写和编辑
+- 基于内容匹配的精确文件编辑
 - 文件搜索和过滤
 - 内容搜索和匹配
 - 文件系统分析
@@ -130,7 +134,10 @@ def main():
     print("输入您的文件操作需求，或输入 'exit' 退出")
     print("\n💡 示例任务:")
     print("  • 列出当前目录中的所有Python文件")
-    print("  • 读取README.md文件的内容")
+    print("  • 读取README.md文件的前20行")
+    print("  • 编辑文件：将'debug=false'替换为'debug=true'")
+    print("  • 编辑文件：将某个函数名替换为新名字")
+    print("  • 编辑文件：替换配置文件中的某个设置")
     print("  • 创建一个测试文件")
     print("  • 在src目录中搜索包含'Tool'的文件")
     

@@ -114,11 +114,11 @@ class ReadFileTool(Tool):
     """
     读取文件内容。
     
-    此工具可以读取指定文件的内容并返回为字符串。支持文本文件的读取。
+    此工具可以读取指定文件的内容并返回为字符串。支持文本文件的读取，并可以限制读取的行数。
     """
     
     name = "read_file"
-    description = "读取指定文件的内容并返回为字符串。"
+    description = "读取指定文件的内容并返回为字符串。支持限制读取的行数以避免读取过大文件。"
     inputs = {
         "file_path": {
             "type": "string",
@@ -128,11 +128,21 @@ class ReadFileTool(Tool):
             "type": "string",
             "description": "文件编码格式，默认为 'utf-8'。",
             "nullable": True
+        },
+        "max_lines": {
+            "type": "integer",
+            "description": "最大读取行数，默认为无限制。设置此参数可以防止读取过大的文件。",
+            "nullable": True
+        },
+        "start_line": {
+            "type": "integer", 
+            "description": "开始读取的行号（从1开始），默认为1。",
+            "nullable": True
         }
     }
     output_type = "string"
     
-    def forward(self, file_path: str, encoding: Optional[str] = None) -> str:
+    def forward(self, file_path: str, encoding: Optional[str] = None, max_lines: Optional[int] = None, start_line: Optional[int] = None) -> str:
         try:
             if not file_path:
                 return "错误：文件路径不能为空。"
@@ -140,6 +150,12 @@ class ReadFileTool(Tool):
             # 默认编码
             if encoding is None:
                 encoding = "utf-8"
+            
+            # 默认开始行号
+            if start_line is None:
+                start_line = 1
+            elif start_line < 1:
+                return "错误：开始行号必须大于等于1。"
             
             # 检查文件是否存在
             path = Path(file_path)
@@ -152,17 +168,39 @@ class ReadFileTool(Tool):
             # 读取文件内容
             try:
                 with open(path, 'r', encoding=encoding) as file:
-                    content = file.read()
+                    lines = file.readlines()
                 
-                # 获取文件信息
+                # 获取文件基本信息
                 file_size = path.stat().st_size
-                line_count = content.count('\n') + 1 if content else 0
+                total_lines = len(lines)
                 
+                # 检查开始行号是否有效
+                if start_line > total_lines:
+                    return f"错误：开始行号 {start_line} 超出文件总行数 {total_lines}。"
+                
+                # 计算实际读取的行数范围
+                start_idx = start_line - 1  # 转换为0基索引
+                if max_lines is None:
+                    end_idx = total_lines
+                    selected_lines = lines[start_idx:]
+                else:
+                    end_idx = min(start_idx + max_lines, total_lines)
+                    selected_lines = lines[start_idx:end_idx]
+                
+                # 构建内容
+                content = ''.join(selected_lines)
+                actual_lines_read = len(selected_lines)
+                
+                # 构建结果
                 result = f"文件：{file_path}\n"
                 result += f"大小：{self._format_size(file_size)}\n"
-                result += f"行数：{line_count}\n"
+                result += f"总行数：{total_lines}\n"
+                result += f"读取范围：第 {start_line} 行到第 {start_line + actual_lines_read - 1} 行\n"
+                result += f"读取行数：{actual_lines_read}\n"
                 result += f"编码：{encoding}\n"
-                result += "=" * 50 + "\n"
+                result += f"文件内容：\n"
+                
+                content = ''.join(selected_lines)
                 result += content
                 
                 return result
@@ -255,6 +293,192 @@ class WriteFileTool(Tool):
                 return f"{size:.1f}{unit}"
             size /= 1024
         return f"{size:.1f}TB"
+
+
+class EditFileTool(Tool):
+    """
+    编辑文件内容。
+    
+    此工具通过查找和替换的方式编辑文件内容。只需要指定原始内容和替换内容，工具会自动找到匹配的内容并替换。
+    """
+    
+    name = "edit_file"
+    description = "通过内容匹配的方式编辑文件，将指定的原始内容替换为新内容。"
+    inputs = {
+        "file_path": {
+            "type": "string",
+            "description": "要编辑的文件路径。"
+        },
+        "old_content": {
+            "type": "string",
+            "description": "要被替换的原始内容。必须完全匹配文件中的内容（包括所有空白字符、缩进、换行符等）。如果为空字符串则创建新文件。"
+        },
+        "new_content": {
+            "type": "string",
+            "description": "替换后的新内容。确保结果正确且符合语言规范。"
+        },
+        "expected_replacements": {
+            "type": "integer",
+            "description": "期望的替换次数，默认为1。用于验证替换操作是否按预期执行。",
+            "nullable": True
+        },
+        "encoding": {
+            "type": "string",
+            "description": "文件编码格式，默认为 'utf-8'。",
+            "nullable": True
+        }
+    }
+    output_type = "string"
+    
+    def forward(self, file_path: str, old_content: str, new_content: str, 
+                expected_replacements: Optional[int] = None, encoding: Optional[str] = None) -> str:
+        try:
+            if not file_path:
+                return "错误：文件路径不能为空。"
+            
+            # 默认编码和期望替换次数
+            if encoding is None:
+                encoding = "utf-8"
+            if expected_replacements is None:
+                expected_replacements = 1
+            
+            path = Path(file_path)
+            
+            # 处理创建新文件的情况
+            if old_content == "":
+                if path.exists():
+                    return f"错误：尝试创建已存在的文件 '{file_path}'。使用非空的old_content来编辑现有文件。"
+                
+                # 创建新文件
+                try:
+                    # 确保父目录存在
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    
+                    with open(path, 'w', encoding=encoding) as file:
+                        file.write(new_content)
+                    
+                    file_size = path.stat().st_size
+                    new_lines = new_content.count('\n') + 1 if new_content else 0
+                    
+                    result = f"✅ 成功创建新文件：{file_path}\n"
+                    result += f"编码：{encoding}\n"
+                    result += f"行数：{new_lines}\n"
+                    result += f"文件大小：{self._format_size(file_size)}\n"
+                    result += "=" * 50 + "\n"
+                    result += f"文件内容：\n{new_content}"
+                    
+                    return result
+                    
+                except PermissionError:
+                    return f"错误：没有权限创建文件 '{file_path}'。"
+                except Exception as create_error:
+                    return f"创建文件时发生错误：{str(create_error)}"
+            
+            # 编辑现有文件
+            if not path.exists():
+                return f"错误：文件 '{file_path}' 不存在。使用空的old_content来创建新文件。"
+            
+            if not path.is_file():
+                return f"错误：'{file_path}' 不是一个文件。"
+            
+            # 读取文件内容
+            try:
+                with open(path, 'r', encoding=encoding) as file:
+                    content = file.read()
+                
+                # 标准化换行符为LF
+                content = content.replace('\r\n', '\n')
+                
+                # 检查原始内容是否存在
+                if old_content not in content:
+                    return f"错误：在文件中未找到指定的原始内容。请使用ReadFileTool验证文件内容。\n查找内容: {repr(old_content)}"
+                
+                # 计算替换次数
+                replace_count = content.count(old_content)
+                
+                # 验证期望的替换次数
+                if replace_count != expected_replacements:
+                    occurrence_term = "次" if expected_replacements == 1 else "次"
+                    return f"错误：期望替换 {expected_replacements} {occurrence_term}，但找到 {replace_count} {occurrence_term}匹配项。"
+                
+                # 检查是否没有实际变更
+                if old_content == new_content:
+                    return f"警告：原始内容和新内容相同，无需变更。"
+                
+                # 执行替换
+                updated_content = content.replace(old_content, new_content)
+                
+                # 写入修改后的内容
+                with open(path, 'w', encoding=encoding) as file:
+                    file.write(updated_content)
+                
+                # 获取文件信息
+                original_size = len(content.encode(encoding))
+                new_size = path.stat().st_size
+                original_lines = content.count('\n') + 1 if content else 0
+                new_lines = updated_content.count('\n') + 1 if updated_content else 0
+                
+                # 生成diff显示
+                diff_content = self._generate_diff(content, updated_content, file_path)
+                
+                # 构建结果
+                result = f"✅ 文件编辑成功：{file_path}\n"
+                result += f"操作：内容替换\n"
+                result += f"编码：{encoding}\n"
+                result += f"替换次数：{replace_count}\n"
+                result += f"原行数：{original_lines}\n"
+                result += f"新行数：{new_lines}\n"
+                result += f"文件大小：{self._format_size(original_size)} → {self._format_size(new_size)}\n"
+                result += "=" * 50 + "\n"
+                result += f"变更详情（diff）：\n{diff_content}"
+                
+                return result
+                
+            except UnicodeDecodeError:
+                return f"错误：无法使用 '{encoding}' 编码读取文件。文件可能是二进制文件或使用不同的编码。"
+            except PermissionError:
+                return f"错误：没有权限编辑文件 '{file_path}'。"
+            
+        except Exception as e:
+            return f"编辑文件时发生错误：{str(e)}"
+    
+    def _format_size(self, size: int) -> str:
+        """格式化文件大小"""
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size < 1024:
+                return f"{size:.1f}{unit}"
+            size /= 1024
+        return f"{size:.1f}TB"
+    
+    def _generate_diff(self, original_content: str, updated_content: str, file_path: str) -> str:
+        """生成diff格式的变更内容"""
+        import difflib
+        from datetime import datetime
+        
+        # 将内容按行分割
+        original_lines = original_content.splitlines(keepends=True)
+        updated_lines = updated_content.splitlines(keepends=True)
+        
+        # 生成unified diff
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        diff_lines = list(difflib.unified_diff(
+            original_lines,
+            updated_lines,
+            fromfile=f"{file_path} (原始)",
+            tofile=f"{file_path} (修改后)",
+            fromfiledate=timestamp,
+            tofiledate=timestamp,
+            lineterm=""
+        ))
+        
+        # 如果没有差异，返回提示信息
+        if not diff_lines:
+            return "无变更内容"
+        
+        # 返回完整的diff内容
+        diff_content = "".join(diff_lines)
+        
+        return diff_content
 
 
 class FileSearchTool(Tool):
@@ -492,6 +716,7 @@ __all__ = [
     "ListDirectoryTool",
     "ReadFileTool", 
     "WriteFileTool",
+    "EditFileTool",
     "FileSearchTool",
     "FileContentSearchTool",
 ]
