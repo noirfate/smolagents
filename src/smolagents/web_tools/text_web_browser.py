@@ -11,6 +11,7 @@ from urllib.parse import unquote, urljoin, urlparse
 
 import pathvalidate
 import requests
+from serpapi import GoogleSearch
 
 from smolagents import Tool
 
@@ -130,7 +131,6 @@ class SimpleTextBrowser:
         downloads_folder: str | None | None = None,
         serpapi_key: str | None | None = None,
         request_kwargs: dict[str, Any] | None | None = None,
-        use_browser_for_text: bool = True,  # 是否对文本内容使用真正的浏览器
     ):
         self.start_page: str = start_page if start_page else "about:blank"
         self.viewport_size = viewport_size  # Applies only to the standard uri types
@@ -145,14 +145,13 @@ class SimpleTextBrowser:
         self.request_kwargs["cookies"] = COOKIES
         self._mdconvert = MarkdownConverter()
         self._page_content: str = ""
-        self.use_browser_for_text = use_browser_for_text  # 是否对文本内容使用真正的浏览器
 
         self._find_on_page_query: str | None = None
         self._find_on_page_last_result: int | None = None  # Location of the last result
     
     def __del__(self):
         """析构时关闭浏览器（如果有的话）"""
-        if hasattr(self, 'use_browser_for_text') and self.use_browser_for_text:
+        if SELENIUM_AVAILABLE:
             try:
                 _browser_manager.close()
             except:
@@ -170,6 +169,8 @@ class SimpleTextBrowser:
         # Handle special URIs
         if uri_or_path == "about:blank":
             self._set_page_content("")
+        elif uri_or_path.startswith("google:"):
+            self._serpapi_search(uri_or_path[len("google:") :].strip(), filter_year=filter_year)
         else:
             if (
                 not uri_or_path.startswith("http:")
@@ -289,6 +290,11 @@ class SimpleTextBrowser:
         return self.viewport
 
     def _split_pages(self) -> None:
+        # Do not split search results
+        if self.address.startswith("google:"):
+            self.viewport_pages = [(0, len(self._page_content))]
+            return
+
         # Handle empty pages
         if len(self._page_content) == 0:
             self.viewport_pages = [(0, 0)]
@@ -304,6 +310,65 @@ class SimpleTextBrowser:
                 end_idx += 1
             self.viewport_pages.append((start_idx, end_idx))
             start_idx = end_idx
+
+    def _serpapi_search(self, query: str, filter_year: int | None = None) -> None:
+        if self.serpapi_key is None:
+            raise ValueError("Missing SerpAPI key.")
+
+        params = {
+            "engine": "google",
+            "q": query,
+            "api_key": self.serpapi_key,
+        }
+        if filter_year is not None:
+            params["tbs"] = f"cdr:1,cd_min:01/01/{filter_year},cd_max:12/31/{filter_year}"
+
+        search = GoogleSearch(params)
+        results = search.get_dict()
+        self.page_title = f"{query} - Search"
+        if "organic_results" not in results.keys():
+            raise Exception(f"No results found for query: '{query}'. Use a less specific query.")
+        if len(results["organic_results"]) == 0:
+            year_filter_message = f" with filter year={filter_year}" if filter_year is not None else ""
+            self._set_page_content(
+                f"No results found for '{query}'{year_filter_message}. Try with a more general query, or remove the year filter."
+            )
+            return
+
+        def _prev_visit(url):
+            for i in range(len(self.history) - 1, -1, -1):
+                if self.history[i][0] == url:
+                    return f"You previously visited this page {round(time.time() - self.history[i][1])} seconds ago.\n"
+            return ""
+
+        web_snippets: list[str] = list()
+        idx = 0
+        if "organic_results" in results:
+            for page in results["organic_results"]:
+                idx += 1
+                date_published = ""
+                if "date" in page:
+                    date_published = "\nDate published: " + page["date"]
+
+                source = ""
+                if "source" in page:
+                    source = "\nSource: " + page["source"]
+
+                snippet = ""
+                if "snippet" in page:
+                    snippet = "\n" + page["snippet"]
+
+                redacted_version = f"{idx}. [{page['title']}]({page['link']}){date_published}{source}\n{_prev_visit(page['link'])}{snippet}"
+
+                redacted_version = redacted_version.replace("Your browser can't play this video.", "")
+                web_snippets.append(redacted_version)
+
+        content = (
+            f"A Google search for '{query}' found {len(web_snippets)} results:\n\n## Web Results\n"
+            + "\n\n".join(web_snippets)
+        )
+
+        self._set_page_content(content)
 
     def _fetch_page(self, url: str) -> None:
         download_path = ""
@@ -327,13 +392,13 @@ class SimpleTextBrowser:
 
                 # Text or HTML
                 if "text/" in content_type.lower():
-                    # 如果启用了真正的浏览器，则使用浏览器获取
-                    if (self.use_browser_for_text and SELENIUM_AVAILABLE):
+                    # 如果selenium可用，则使用浏览器获取更好的文本内容
+                    if SELENIUM_AVAILABLE:
                         title, text_content = _browser_manager.get_page_text(url)
                         self.page_title = title
                         self._set_page_content(text_content)
                     else:
-                        # 使用原有的方法处理非HTML内容或禁用浏览器时
+                        # 使用原有的方法处理
                         res = self._mdconvert.convert_response(response)
                         self.page_title = res.title
                         self._set_page_content(res.text_content)
@@ -420,6 +485,28 @@ class SimpleTextBrowser:
 
         header += f"Viewport position: Showing page {current_page + 1} of {total_pages}.\n"
         return (header, self.viewport)
+
+
+class SearchInformationTool(Tool):
+    name = "web_search"
+    description = "Perform a web search query (think a google search) and returns the search results."
+    inputs = {"query": {"type": "string", "description": "The web search query to perform."}}
+    inputs["filter_year"] = {
+        "type": "string",
+        "description": "[Optional parameter]: filter the search results to only include pages from a specific year. For example, '2020' will only include pages from 2020. Make sure to use this parameter if you're trying to search for articles from a specific date!",
+        "nullable": True,
+    }
+    output_type = "string"
+
+    def __init__(self, browser):
+        super().__init__()
+        self.browser = browser
+
+    def forward(self, query: str, filter_year: int | None = None) -> str:
+        self.browser.visit_page(f"google: {query}", filter_year=filter_year)
+        header, content = self.browser._state()
+        return header.strip() + "\n=======================\n" + content
+
 
 class VisitTool(Tool):
     name = "visit_page"

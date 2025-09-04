@@ -22,6 +22,7 @@ from .default_tools import *
 from .enhanced_memory_agents import *
 from .filesystem_tools import *
 from .shell_tools import *
+from .web_tools import WebTools
 from .github_tools import *
 from .goal_drift_callback import *
 from .gradio_ui import *

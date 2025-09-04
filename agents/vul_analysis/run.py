@@ -1,13 +1,12 @@
 import argparse
-import json
 import os
 from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
-from scripts.vulnerability_info_collector import VulnerabilityInfoCollector
-from scripts.vulnerability_analysis import VulnerabilityAnalyzer
-from scripts.vulnerability_exploitation import VulnerabilityExploiter
+from vulnerability_info_collector import VulnerabilityInfoCollector
+from vulnerability_analysis import VulnerabilityAnalyzer
+from vulnerability_exploitation import VulnerabilityExploiter
 
 from smolagents import (
     LiteLLMModel,
@@ -47,11 +46,6 @@ def parse_args():
         "--enable-monitoring", 
         action="store_true", 
         help="启用Phoenix监控"
-    )
-    parser.add_argument(
-        "--disable-browser", 
-        action="store_true", 
-        help="禁用真正的浏览器，改用传统的HTML解析"
     )
     return parser.parse_args()
 
