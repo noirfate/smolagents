@@ -56,7 +56,7 @@ class BrowserManager:
             chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
             
             self.driver = webdriver.Chrome(options=chrome_options)
-            self.driver.set_page_load_timeout(90)
+            self.driver.set_page_load_timeout(180)
             self._is_initialized = True
         except Exception as e:
             print(f"Warning: Failed to create browser driver: {e}")
