@@ -73,6 +73,22 @@ class BrowserManager:
         except:
             return False
     
+    def simulate_human_behavior(self):
+        """模拟人类行为"""
+        if self.driver is None:
+            return
+
+        try:
+            # 简单的滚动行为
+            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
+            time.sleep(1)
+            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(2)
+            self.driver.execute_script("window.scrollTo(0, 0);")
+            time.sleep(1)
+        except Exception as e:
+            print(f"⚠️ 模拟人类行为时出错: {e}")
+
     def get_page_text(self, url: str, timeout: int = 10) -> tuple[str, str]:
         """
         使用浏览器获取页面的纯文本内容
@@ -87,6 +103,8 @@ class BrowserManager:
             
             # 等待页面加载完成
             driver.implicitly_wait(timeout)
+            
+            self.simulate_human_behavior()
             
             # 获取页面标题
             title = driver.title or "Untitled Page"

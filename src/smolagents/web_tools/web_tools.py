@@ -51,11 +51,11 @@ class WebTools:
         if browser_config is None:
             user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
             browser_config = {
-                "viewport_size": 1024 * 5,
+                "viewport_size": 1024 * 8,
                 "downloads_folder": "downloads_folder",
                 "request_kwargs": {
                     "headers": {"User-Agent": user_agent},
-                    "timeout": 300,
+                    "timeout": 120,
                 },
                 "serpapi_key": os.getenv("SERPAPI_API_KEY"),
             }
