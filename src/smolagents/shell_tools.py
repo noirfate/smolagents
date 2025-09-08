@@ -79,15 +79,35 @@ class ExecuteCommandTool(Tool):
             import time
             start_time = time.time()
             
-            result = subprocess.run(
-                command,
-                cwd=working_directory,
-                capture_output=True,
-                text=True,
-                timeout=timeout if timeout > 0 else None,
-                env=env,
-                shell=True
-            )
+            # 在Windows上设置正确的编码
+            encoding = 'utf-8' if platform.system() != 'Windows' else 'gbk'
+            errors = 'replace'  # 替换无法解码的字符
+            
+            try:
+                result = subprocess.run(
+                    command,
+                    cwd=working_directory,
+                    capture_output=True,
+                    text=True,
+                    encoding=encoding,
+                    errors=errors,
+                    timeout=timeout if timeout > 0 else None,
+                    env=env,
+                    shell=True
+                )
+            except UnicodeDecodeError:
+                # 如果编码失败，尝试使用UTF-8
+                result = subprocess.run(
+                    command,
+                    cwd=working_directory,
+                    capture_output=True,
+                    text=True,
+                    encoding='utf-8',
+                    errors='replace',
+                    timeout=timeout if timeout > 0 else None,
+                    env=env,
+                    shell=True
+                )
             
             end_time = time.time()
             execution_time = round(end_time - start_time, 2)

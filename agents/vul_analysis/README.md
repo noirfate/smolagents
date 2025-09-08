@@ -25,6 +25,14 @@
    - 概念验证代码（POC）
    - 详细复现步骤指导
 
+### POC自动验证
+4. **POC验证器** (`poc.py`)：基于大模型的智能漏洞复现验证
+   - 自动解析漏洞分析报告
+   - 智能环境搭建和配置
+   - 自动化POC执行和调试
+   - 迭代验证直到成功复现
+   - 详细记录验证过程和结果
+
 ## 🚀 快速开始
 
 ### 环境准备
@@ -96,19 +104,49 @@ python run.py CVE-2024-1234 --enable-monitoring
 python run.py CVE-2024-1234 --disable-browser
 ```
 
+### POC验证
+
+**验证现有漏洞报告：**
+```bash
+python poc.py output/CVE-2024-1234/final_report_CVE-2024-1234.md
+```
+
+**指定输出目录和模型：**
+```bash
+python poc.py output/CVE-2024-1234/final_report_CVE-2024-1234.md --output-dir poc_results --model-id gemini-2.5-pro
+```
+
+**启用监控和详细日志：**
+```bash
+python poc.py output/CVE-2024-1234/final_report_CVE-2024-1234.md --enable-monitoring --max-steps 100
+```
+
 ### 命令行参数
+
+#### 漏洞分析 (`run.py`)
 
 | 参数 | 描述 | 默认值 |
 |------|------|--------|
 | `vulnerability_id` | 漏洞标识符（如CVE编号） | 必需 |
-| `--model-id` | 使用的LLM模型 | `gemini-2.5-pro` |
+| `--model-id` | 使用的LLM模型 | `gpt-5-chat` |
 | `--max-steps` | 每阶段最大执行步数 | `30` |
 | `--stage` | 执行阶段（all/info/analysis/exploitation） | `all` |
 | `--output-dir` | 输出目录 | `output` |
 | `--enable-monitoring` | 启用Phoenix监控 | 禁用 |
-| `--disable-browser` | 禁用高级浏览器功能 | 启用 |
+
+#### POC验证 (`poc.py`)
+
+| 参数 | 描述 | 默认值 |
+|------|------|--------|
+| `report_path` | 漏洞分析报告路径 | 必需 |
+| `--model-id` | 使用的LLM模型 | `gpt-5-chat` |
+| `--max-steps` | Agent最大执行步数 | `50` |
+| `--output-dir` | 验证结果输出目录 | `poc_validation_output` |
+| `--enable-monitoring` | 启用Phoenix监控 | 禁用 |
 
 ## 📁 输出结果
+
+### 漏洞分析输出
 
 工作流会在输出目录中创建以下文件：
 
@@ -121,14 +159,28 @@ output/
     └── final_report_CVE-2024-1234.md         # 最终综合报告
 ```
 
+### POC验证输出
+
+POC验证器会创建以下结构：
+
+```
+poc_validation_output/
+└── CVE-2024-1234_poc_validation/
+    ├── poc_validation_result_CVE-2024-1234.md  # 验证结果报告
+    ├── environment/                             # 环境配置文件
+    ├── poc_code/                                # 最终可工作的POC代码
+    └── logs/                                    # 验证过程日志
+```
+
 ## 🛠️ 技术架构
 
 ### 核心组件
 
 - **主工作流** (`run.py`)：协调三个阶段的执行
-- **信息收集器** (`scripts/vulnerability_info_collector.py`)：第一阶段agent
-- **根因分析器** (`scripts/vulnerability_analysis.py`)：第二阶段agent
-- **利用分析器** (`scripts/vulnerability_exploitation.py`)：第三阶段agent
+- **信息收集器** (`vulnerability_info_collector.py`)：第一阶段agent
+- **根因分析器** (`vulnerability_analysis.py`)：第二阶段agent
+- **利用分析器** (`vulnerability_exploitation.py`)：第三阶段agent
+- **POC验证器** (`poc.py`)：基于大模型的智能漏洞复现验证
 
 ### 依赖工具
 
