@@ -38,13 +38,20 @@ git checkout dev
 
 2. **安装**
 ```bash
-pip install -e .[audio,docker,gradio,litellm,mcp,openai,telemetry,toolkit,transformers,vision]
-pip install ddgs
+pip install -e .[docker,litellm,mcp,openai,telemetry,toolkit,vision]
+
+pip install beautifulsoup4 google_search_results markdownify python-dotenv pypdf openpyxl pyPDF2 python-pptx mammoth pdfminer pdfminer.six puremagic pydub SpeechRecognition youtube_transcript_api ddgs
 ```
 
 3. **安装其他可选依赖**
 ```bash
 pip install selenium
+wget -qO- https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-linux-signing-keyring.gpg
+
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-linux-signing-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" | tee /etc/apt/sources.list.d/google-chrome.list
+
+apt update
+apt install -y google-chrome-stable
 ```
 
 ### 环境变量配置
