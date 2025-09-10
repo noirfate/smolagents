@@ -65,6 +65,13 @@ def parse_args():
         default=75,
         help="最低质量分数要求，默认为75"
     )
+    parser.add_argument(
+        "--search-engine",
+        type=str,
+        default="duckduckgo",
+        choices=["duckduckgo", "google"],
+        help="搜索引擎选择，默认为duckduckgo"
+    )
     return parser.parse_args()
 
 def setup_monitoring(enable_monitoring):
@@ -227,13 +234,13 @@ def enhance_task_with_guidance(base_task, guidance):
 """
     return enhanced_task
 
-def stage_1_vulnerability_info_collection(vulnerability_id, model, max_steps, output_path, quality_config=None):
+def stage_1_vulnerability_info_collection(vulnerability_id, model, max_steps, output_path, quality_config=None, search_engine="duckduckgo"):
     """第一阶段：漏洞基础信息收集"""
     print("\n" + "="*60)
     print("🔍 第一阶段：漏洞基础信息收集")
     print("="*60)
     
-    collector = VulnerabilityInfoCollector(model, max_steps)
+    collector = VulnerabilityInfoCollector(model, max_steps, search_engine)
     validator = VulnerabilityAnalysisValidator(model) if quality_config and quality_config.enable_validation else None
     
     base_task = f"""
@@ -255,13 +262,13 @@ def stage_1_vulnerability_info_collection(vulnerability_id, model, max_steps, ou
     filepath = save_stage_result(result, "stage1_info", output_path, vulnerability_id)
     return result, filepath
 
-def stage_2_vulnerability_analysis(vulnerability_id, stage1_data, model, max_steps, output_path, quality_config=None):
+def stage_2_vulnerability_analysis(vulnerability_id, stage1_data, model, max_steps, output_path, quality_config=None, search_engine="duckduckgo"):
     """第二阶段：漏洞原因分析"""
     print("\n" + "="*60)
     print("🔬 第二阶段：漏洞原因分析")
     print("="*60)
     
-    analyzer = VulnerabilityAnalyzer(model, max_steps)
+    analyzer = VulnerabilityAnalyzer(model, max_steps, search_engine)
     validator = VulnerabilityAnalysisValidator(model) if quality_config and quality_config.enable_validation else None
     
     base_task = f"""
@@ -287,13 +294,13 @@ def stage_2_vulnerability_analysis(vulnerability_id, stage1_data, model, max_ste
     filepath = save_stage_result(result, "stage2_analysis", output_path, vulnerability_id)
     return result, filepath
 
-def stage_3_vulnerability_exploitation(vulnerability_id, stage1_data, stage2_data, model, max_steps, output_path, quality_config=None):
+def stage_3_vulnerability_exploitation(vulnerability_id, stage1_data, stage2_data, model, max_steps, output_path, quality_config=None, search_engine="duckduckgo"):
     """第三阶段：漏洞利用分析"""
     print("\n" + "="*60)
     print("⚔️ 第三阶段：漏洞利用分析")
     print("="*60)
     
-    exploiter = VulnerabilityExploiter(model, max_steps)
+    exploiter = VulnerabilityExploiter(model, max_steps, search_engine)
     validator = VulnerabilityAnalysisValidator(model) if quality_config and quality_config.enable_validation else None
     
     base_task = f"""
@@ -366,6 +373,7 @@ def main():
     print(f"🎯 开始分析漏洞: {args.vulnerability_id}")
     print(f"🤖 使用模型: {args.model_id}")
     print(f"📊 最大步数: {args.max_steps}")
+    print(f"🔍 搜索引擎: {args.search_engine}")
     
     # 获取已有数据
     stage1_data = results[1]
@@ -377,14 +385,14 @@ def main():
         # 第一阶段：信息收集
         if args.stage in ["all", "info"] and not stage1_data:
             stage1_data, _ = stage_1_vulnerability_info_collection(
-                args.vulnerability_id, model, args.max_steps, output_path, quality_config
+                args.vulnerability_id, model, args.max_steps, output_path, quality_config, args.search_engine
             )
         
         # 第二阶段：原因分析  
         if args.stage in ["all", "analysis"] and not stage2_data:
             if stage1_data:
                 stage2_data, _ = stage_2_vulnerability_analysis(
-                    args.vulnerability_id, stage1_data, model, args.max_steps, output_path, quality_config
+                    args.vulnerability_id, stage1_data, model, args.max_steps, output_path, quality_config, args.search_engine
                 )
             else:
                 print("❌ 第二阶段需要第一阶段的数据，请先运行信息收集阶段")
@@ -394,7 +402,7 @@ def main():
         if args.stage in ["all", "exploitation"] and not stage3_data:
             if stage1_data and stage2_data:
                 stage3_data, _ = stage_3_vulnerability_exploitation(
-                    args.vulnerability_id, stage1_data, stage2_data, model, args.max_steps, output_path, quality_config
+                    args.vulnerability_id, stage1_data, stage2_data, model, args.max_steps, output_path, quality_config, args.search_engine
                 )
             else:
                 print("❌ 第三阶段需要前两个阶段的数据")
