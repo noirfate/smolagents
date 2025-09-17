@@ -582,13 +582,13 @@ class FileSearchTool(Tool):
 
 class FileContentSearchTool(Tool):
     """
-    在文件中搜索指定内容。
+    在文件或目录中搜索包含指定内容的文件，支持通配符匹配，不支持递归搜索子目录。
     
-    此工具可以在指定文件或目录中的文件内容中搜索指定的文本模式。
+    此工具可以在指定文件或目录中的文件内容中搜索指定的文本模式，支持使用通配符进行模式匹配。
     """
     
     name = "search_file_content"
-    description = "在文件内容中搜索指定的文本模式，支持在单个文件或目录中的多个文件中搜索。"
+    description = "在文件内容中搜索指定的文本模式，支持通配符匹配和在单个文件或目录中的多个文件中搜索。"
     inputs = {
         "search_path": {
             "type": "string",
@@ -596,7 +596,7 @@ class FileContentSearchTool(Tool):
         },
         "search_text": {
             "type": "string", 
-            "description": "要搜索的文本内容。"
+            "description": "要搜索的文本内容或模式。支持通配符：* 匹配任意字符序列，? 匹配单个字符。"
         },
         "file_pattern": {
             "type": "string",
@@ -623,6 +623,9 @@ class FileContentSearchTool(Tool):
             if case_sensitive is None:
                 case_sensitive = False
             
+            # 自动检测是否包含通配符
+            has_wildcards = '*' in search_text or '?' in search_text
+            
             path = Path(search_path)
             if not path.exists():
                 return f"错误：路径 '{search_path}' 不存在。"
@@ -631,7 +634,7 @@ class FileContentSearchTool(Tool):
             
             if path.is_file():
                 # 搜索单个文件
-                result = self._search_in_file(path, search_text, case_sensitive)
+                result = self._search_in_file(path, search_text, case_sensitive, has_wildcards)
                 if result:
                     results.extend(result)
             elif path.is_dir():
@@ -645,21 +648,21 @@ class FileContentSearchTool(Tool):
                 files = [f for f in files if Path(f).is_file()]
                 
                 for file_path in files:
-                    file_results = self._search_in_file(Path(file_path), search_text, case_sensitive)
+                    file_results = self._search_in_file(Path(file_path), search_text, case_sensitive, has_wildcards)
                     if file_results:
                         results.extend(file_results)
             
+            search_type = "区分大小写" if case_sensitive else "不区分大小写"
+            wildcard_info = "，通配符模式" if has_wildcards else ""
+
             if not results:
-                search_type = "区分大小写" if case_sensitive else "不区分大小写"
                 if path.is_file():
-                    return f"在文件 '{search_path}' 中没有找到 '{search_text}'（{search_type}）。"
+                    return f"在文件 '{search_path}' 中没有找到 '{search_text}'（{search_type}{wildcard_info}）。"
                 else:
                     pattern_info = f"，文件模式：{file_pattern}" if file_pattern and file_pattern != "*" else ""
-                    return f"在目录 '{search_path}' 中没有找到 '{search_text}'（{search_type}{pattern_info}）。"
+                    return f"在目录 '{search_path}' 中没有找到 '{search_text}'（{search_type}{wildcard_info}{pattern_info}）。"
             
-            # 格式化结果
-            search_type = "区分大小写" if case_sensitive else "不区分大小写"
-            result_text = f"搜索 '{search_text}'（{search_type}）的结果:\n\n"
+            result_text = f"搜索 '{search_text}'（{search_type}{wildcard_info}）的结果:\n\n"
             
             current_file = None
             for file_path, line_num, line_content in results:
@@ -677,7 +680,7 @@ class FileContentSearchTool(Tool):
         except Exception as e:
             return f"搜索文件内容时发生错误：{str(e)}"
     
-    def _search_in_file(self, file_path: Path, search_text: str, case_sensitive: bool) -> list:
+    def _search_in_file(self, file_path: Path, search_text: str, case_sensitive: bool, has_wildcards: bool) -> list:
         """在单个文件中搜索文本"""
         results = []
         try:
@@ -698,12 +701,22 @@ class FileContentSearchTool(Tool):
                 return results
             
             # 搜索文本
-            search_lower = search_text.lower() if not case_sensitive else search_text
-            
-            for line_num, line in enumerate(content, 1):
-                line_to_search = line if case_sensitive else line.lower()
-                if search_lower in line_to_search:
-                    results.append((str(file_path), line_num, line))
+            if has_wildcards:
+                # 使用fnmatch进行通配符匹配
+                search_pattern = search_text if case_sensitive else search_text.lower()
+                
+                for line_num, line in enumerate(content, 1):
+                    line_to_search = line if case_sensitive else line.lower()
+                    if fnmatch.fnmatch(line_to_search.rstrip('\n\r'), search_pattern):
+                        results.append((str(file_path), line_num, line))
+            else:
+                # 使用普通字符串包含匹配
+                search_lower = search_text.lower() if not case_sensitive else search_text
+                
+                for line_num, line in enumerate(content, 1):
+                    line_to_search = line if case_sensitive else line.lower()
+                    if search_lower in line_to_search:
+                        results.append((str(file_path), line_num, line))
         
         except (PermissionError, OSError):
             # 跳过无法访问的文件
