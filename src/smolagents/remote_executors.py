@@ -26,7 +26,6 @@ import tempfile
 import time
 from contextlib import closing
 from io import BytesIO
-from pathlib import Path
 from textwrap import dedent
 from typing import Any, Optional
 
@@ -174,7 +173,12 @@ class E2BExecutor(RemotePythonExecutor):
             raise ModuleNotFoundError(
                 """Please install 'e2b' extra to use E2BExecutor: `pip install 'smolagents[e2b]'`"""
             )
-        self.sandbox = Sandbox(**kwargs)
+        # Support both e2b v1 and v2 constructors
+        # v2 exposes Sandbox.create(...), while v1 uses Sandbox(...)
+        if hasattr(Sandbox, "create"):
+            self.sandbox = Sandbox.create(**kwargs)
+        else:
+            self.sandbox = Sandbox(**kwargs)
         self.installed_packages = self.install_packages(additional_imports)
         self.logger.log("E2B is running", level=LogLevel.INFO)
 
@@ -405,13 +409,8 @@ class DockerExecutor(RemotePythonExecutor):
 
             if build_new_image:
                 self.logger.log(f"Building Docker image {self.image_name}...", level=LogLevel.INFO)
-                dockerfile_path = Path(__file__).parent / "Dockerfile"
-                if not dockerfile_path.exists():
-                    with open(dockerfile_path, "w") as f:
-                        f.write(self.dockerfile_content)
-                _, build_logs = self.client.images.build(
-                    path=str(dockerfile_path.parent), dockerfile=str(dockerfile_path), tag=self.image_name
-                )
+                dockerfile_obj = BytesIO(self.dockerfile_content.encode("utf-8"))
+                _, build_logs = self.client.images.build(fileobj=dockerfile_obj, tag=self.image_name)
                 for log_chunk in build_logs:
                     # Only log non-empty messages
                     if log_message := log_chunk.get("stream", "").rstrip():
@@ -439,6 +438,9 @@ class DockerExecutor(RemotePythonExecutor):
                 retries += 1
 
             self.base_url = f"http://{host}:{port}"
+
+            # Wait for Jupyter to start
+            self._wait_for_server()
 
             # Create new kernel via HTTP
             self.kernel_id = _create_kernel_http(f"{self.base_url}/api/kernels", self.logger)
@@ -473,6 +475,21 @@ class DockerExecutor(RemotePythonExecutor):
     def delete(self):
         """Ensure cleanup on deletion."""
         self.cleanup()
+
+    def _wait_for_server(self):
+        retries = 0
+        jupyter_ready = False
+        while not jupyter_ready and retries < 10:
+            try:
+                if requests.get(f"{self.base_url}/api/kernelspecs", timeout=2).status_code == 200:
+                    jupyter_ready = True
+                else:
+                    self.logger.log("Jupyter not ready, waiting...", level=LogLevel.INFO)
+            except requests.RequestException:
+                self.logger.log("Jupyter not ready, waiting...", level=LogLevel.INFO)
+            if not jupyter_ready:
+                time.sleep(1)
+                retries += 1
 
 
 class ModalExecutor(RemotePythonExecutor):
