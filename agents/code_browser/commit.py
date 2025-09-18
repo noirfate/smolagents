@@ -91,7 +91,7 @@ def main():
     
     print(f"🔍 分析完成，结果已保存到commit_results.md")
 
-    with open("commit_results.md", "w") as f:
+    with open("commit_results.md", "w", encoding="utf-8") as f:
         f.write("\n\n".join(results))
 
 if __name__ == "__main__":
