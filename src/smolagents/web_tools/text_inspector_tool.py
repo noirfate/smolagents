@@ -32,7 +32,20 @@ This tool handles the following file extensions: [".html", ".htm", ".xlsx", ".pp
     def forward_initial_exam_mode(self, file_path, question):
         from smolagents.models import MessageRole
 
-        result = self.md_converter.convert(file_path)
+        # 如果是.md文件，直接读取内容而不需要转换
+        if file_path.lower().endswith('.md'):
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    text_content = f.read()
+                if not question:
+                    return text_content
+                # 如果有问题，继续使用LLM处理
+                result = type('Result', (), {'text_content': text_content, 'title': None})()
+            except Exception as e:
+                # 如果直接读取失败，回退到原来的转换方式
+                result = self.md_converter.convert(file_path)
+        else:
+            result = self.md_converter.convert(file_path)
 
         if file_path[-4:] in [".png", ".jpg"]:
             raise Exception("Cannot use inspect_file_as_text tool with images: use visualizer instead!")
@@ -76,7 +89,20 @@ This tool handles the following file extensions: [".html", ".htm", ".xlsx", ".pp
     def forward(self, file_path, question: str | None = None) -> str:
         from smolagents.models import MessageRole
 
-        result = self.md_converter.convert(file_path)
+        # 如果是.md文件，直接读取内容而不需要转换
+        if file_path.lower().endswith('.md'):
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    text_content = f.read()
+                if not question:
+                    return text_content
+                # 如果有问题，继续使用LLM处理
+                result = type('Result', (), {'text_content': text_content, 'title': None})()
+            except Exception as e:
+                # 如果直接读取失败，回退到原来的转换方式
+                result = self.md_converter.convert(file_path)
+        else:
+            result = self.md_converter.convert(file_path)
 
         if file_path[-4:] in [".png", ".jpg"]:
             raise Exception("Cannot use inspect_file_as_text tool with images: use visualizer instead!")

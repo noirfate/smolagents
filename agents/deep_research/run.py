@@ -3,6 +3,7 @@ import os
 
 from dotenv import load_dotenv
 from scripts.visual_qa import visualizer
+from filesystem_agent import create_filesystem_agent
 
 from smolagents import (
     LiteLLMModel,
@@ -139,57 +140,9 @@ def create_agent(model_id="gpt-5-chat", max_steps=50):
         
         managed_agents.append(github_agent)
 
-    # 创建专门的代码执行agent
-    code_agent = MemoryCompressedCodeAgent(
-        model=model,
-        tools=[],
-        max_steps=max_steps,
-        verbosity_level=2,
-        additional_authorized_imports=["*"],
-        planning_interval=4,
-        name="code_agent", 
-        description="""A specialized team member for writing and executing Python code to solve problems.
-    Ask him for tasks that require:
-    - Data analysis and processing
-    - Mathematical calculations and computations
-    - File operations and data manipulation
-    - Visualization and plotting
-    - Algorithm implementation
-    - Scientific computing tasks
-    - Any task that can be solved by writing and running Python code
-    
-    He can write, execute and debug Python code to provide solutions and results.
-    Provide him with clear requirements about what you want to accomplish with code.
-    """,
-    )
-    code_agent.prompt_templates["managed_agent"]["task"] += """
-    When writing code:
-    - Write clean, well-commented Python code
-    - Handle errors gracefully with try-catch blocks
-    - Use appropriate libraries for the task
-    - Provide clear output and explanations
-    
-    IMPORTANT CODE EXECUTION RULES:
-    1. **Library Installation**: If you need to import a library that might not be installed, 
-       first try to install it using pip. For example:
-       ```python
-       try:
-           import pandas as pd
-       except ImportError:
-           import subprocess
-           subprocess.check_call(['pip', 'install', 'pandas'])
-           import pandas as pd
-       ```
-    
-    2. **Avoid __name__ Usage**: NEVER use `__name__` in your code as it's not supported 
-       by the local Python executor. This means:
-       - ❌ DON'T write: `if __name__ == '__main__':`
-       - ❌ DON'T use: `print(__name__)`
-       - ✅ DO write: Execute code directly without name checks
-       - ✅ DO organize: Use functions and call them directly
-    """
-    
-    managed_agents.append(code_agent)
+    # 创建文件系统操作agent
+    filesystem_agent = create_filesystem_agent(model, max_steps)
+    managed_agents.append(filesystem_agent)
 
     # 创建目标偏离检测回调
     goal_drift_detector = GoalDriftCallback()
