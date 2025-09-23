@@ -15,6 +15,7 @@ from smolagents import (
     ExecuteCommandTool,
     GetSystemInfoTool,
 )
+from smolagents.web_tools import WebTools
 
 class CodeBrowserAgent:
     """代码浏览器Agent类，封装了Agent的创建和管理逻辑"""
@@ -143,8 +144,8 @@ class CodeBrowserAgent:
         tools = []
         
         # Web工具 - 用于搜索CodeQL文档和示例
-        #web_tools = WebTools(self._model, text_limit=100000, search_engine="duckduckgo")
-        #tools.extend(web_tools.tools)
+        web_tools = WebTools(self._model, text_limit=100000, search_engine="duckduckgo")
+        tools.extend(web_tools.tools)
 
         # 文件系统工具 - 用于浏览和分析代码
         filesystem_tools = [
@@ -299,7 +300,9 @@ class CodeBrowserAgent:
         base_task = f"""
 用户需求: {user_input}
 
-**工作环境:**
+---
+
+## 工作环境
 - 代码目录: {self.code_dir}
 """
         
@@ -308,11 +311,12 @@ class CodeBrowserAgent:
         # CodeQL 相关内容
         if self.codeql_enabled:
             codeql_section = f"""
-**CodeQL环境:**
+## CodeQL配置
+### CodeQL环境
 - CodeQL数据库路径: {self.db_path}
 - CodeQL工作目录: {self.work_dir}
 
-**CodeQL执行流程:**
+### CodeQL执行流程
 1. 查询数据库语言: `codeql resolve database {self.db_path}`
 2. 在{self.work_dir}目录下创建对应语言的`qlpack.yml`
 3. 在{self.work_dir}目录下执行`codeql pack install`安装依赖
@@ -339,7 +343,6 @@ dependencies:                 # 告诉 CodeQL 需要哪些库
  */
 
 import [相关库]
-import DataFlow::PathGraph  // 如果需要路径分析
 
 // 定义配置类或直接编写查询逻辑
 from [变量声明]
@@ -348,6 +351,53 @@ select [结果选择], [消息]
 ```
 
 **CodeQL查询示例（Go语言）:**
+- 例1
+```ql
+/**
+ * @id go/command-injection-taint
+ * @name User-controlled data to command execution (Go)
+ * @kind path-problem
+ * @problem.severity error
+ * @precision medium
+ * @tags security; external/cwe/cwe-078
+ */
+
+import go
+import semmle.go.dataflow.DataFlow
+import codeql.dataflow.TaintTracking
+
+/** 配置：定义源与汇 */
+module CmdCfg implements DataFlow::ConfigSig {{
+  /** 源：示例把 os.Getenv(...) 的结果当作“用户可控” */
+  predicate isSource(DataFlow::Node src) {{
+    exists(CallExpr c |
+      c.getTarget().hasQualifiedName("os", "Getenv") and
+      src.asExpr() = c
+    )
+  }}
+
+  /** 汇：示例把 exec.Command* 的任一参数当作危险汇点 */
+  predicate isSink(DataFlow::Node sink) {{
+    exists(CallExpr c |
+      (
+        c.getTarget().hasQualifiedName("os/exec", "Command") or
+        c.getTarget().hasQualifiedName("os/exec", "CommandContext")
+      ) and
+      sink.asExpr() = c.getAnArgument()
+    )
+  }}
+}}
+
+/** 实例化全局污点跟踪，并导入路径图 */
+module CmdFlow = TaintTracking::Global<CmdCfg>;
+import CmdFlow::PathGraph
+
+from CmdFlow::PathNode source, CmdFlow::PathNode sink
+where CmdFlow::flowPath(source, sink)
+select sink.getNode(), source, sink,
+  "User-controlled data reaches command execution."
+```
+- 例2
 ```ql
 /**
  * @name Calls to NewImagePolicyWebhook (Go)
@@ -378,28 +428,31 @@ select
   "Call to NewImagePolicyWebhook"    // 说明
 ```
 
-**常见CodeQL库:**
-- Java: `import java`, `import semmle.code.java.dataflow.*`
-- Python: `import python`, `import semmle.python.dataflow.*`
-- JavaScript: `import javascript`, `import semmle.javascript.dataflow.*`
-- C/C++: `import cpp`, `import semmle.code.cpp.dataflow.*`
-- Go: `import go`, `import semmle.go.dataflow.*`, `import semmle.go.security.*`
-
 **执行CodeQL查询:**
 - 保存查询: 使用write_file工具将查询保存到{self.work_dir}目录中
 - 文件命名: 使用描述性名称，如 "find_sql_injection.ql" 或 "detect_hardcoded_secrets.ql"
 - 执行查询: `codeql query run --database={self.db_path} {self.work_dir}/[查询文件.ql]`
 
-**CodeQL注意事项:**
+### CodeQL注意事项
 - 命令执行无需设置超时时间
-- 可以使用CodeQL进行深度静态分析
+- 执行遇到错误时请访问官方文档`https://codeql.github.com/codeql-standard-libraries/go`查找相关定义，根据官方最新定义进行相应修改
+- 在生成 CodeQL 查询时，务必避免定义过宽的 source 或 sink。请限制在特定的函数、类型或包名范围内，而不是“所有函数调用”。
+- 生成的查询必须包含【优化说明】注释，解释可能的性能风险点，以及如何进一步收缩范围。
+
+#### CodeQL典型"旧知识误用 -> 新写法"对照
+| 旧写法（错误）| 新写法（正确）|
+| --- | --- |
+| import semmle.code.go.dataflow.TaintTracking | import codeql.dataflow.TaintTracking |
+| class Cfg extends TaintTracking::Configuration {{ … }} | module Cfg implements DataFlow::ConfigSig {{ … }} + module Flow = TaintTracking::Global<Cfg> |
+| from DataFlow::PathNode s, DataFlow::PathNode t … | from Flow::PathNode source, Flow::PathNode sink …（Flow 为你实例化的模块）|
+| c.getCalleeExpr().getReferent() | c.getTarget() |
 
 """
             task_content += codeql_section
         
         # 通用分析方法（始终包含）
         analysis_methods = """
-**代码分析方法:**
+## 代码分析方法
 - **静态分析**: 通过读取和分析源代码文件
 - **模式匹配**: 使用模式匹配工具查找特定代码片段
 - **依赖分析**: 分析import/require语句和配置文件
@@ -427,7 +480,7 @@ select
         # 分析重点
         analysis_focus = """
 
-**分析重点:**
+### 分析重点
 - 代码逻辑、功能、调用链
 - 安全问题检查（SQL注入、XSS、命令注入、环境变量注入、竞争条件、UAF、逻辑漏洞、敏感信息泄露、缓冲区溢出等安全问题）
 - 架构和设计问题"""
@@ -443,7 +496,7 @@ select
         # 工具使用
         tool_usage = """
 
-**工具使用:**
+### 工具使用
 - 使用文件系统工具搜索、浏览和读取代码
 - 使用系统命令执行必要的分析工具"""
         
@@ -462,8 +515,9 @@ select
         # 注意事项
         notes = """
 
-**注意事项:**
+## 注意事项
 - 不用去互联网上搜索源码，源码在指定的代码目录下
+- CodeQL遇到语法问题不要擅自修改，先去互联网上寻找解决方案，如访问CodeQL官方文档（https://codeql.github.com/codeql-standard-libraries/go/）
 - 根据具体需求选择合适的分析方法和工具"""
         
         if self.codeql_enabled and self.git_enabled:
