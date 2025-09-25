@@ -7,7 +7,7 @@ import threading
 import time
 import uuid
 import queue
-from typing import Dict, Any, Optional, List, Callable
+from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, asdict
 from enum import Enum
 import json
@@ -713,29 +713,9 @@ class GetTaskResultsTool(Tool):
         summary += "\n".join(results)
         
         # 添加特殊的结果字典标记，用于解析
-        import json
         summary += f"\n\n# RESULTS_DICT_JSON: {json.dumps(results_dict)}"
         
         return summary
-
-
-# 简单的解析函数，提取结果字典
-def parse_task_results(results_string: str) -> dict:
-    """解析get_task_results返回的字符串，提取结果字典"""
-    import json
-    import re
-    
-    # 查找特殊的结果字典JSON格式
-    match = re.search(r'# RESULTS_DICT_JSON: (.+)', results_string)
-    if match:
-        try:
-            return json.loads(match.group(1))
-        except json.JSONDecodeError:
-            pass
-    
-    # 如果没有找到特殊格式，返回空字典
-    return {}
-
 
 class AsyncAgent:
     """
@@ -819,6 +799,12 @@ class AsyncAgent:
 task1_id = submit_task("tool", "data_processor", {"dataset": "A"})
 task2_id = submit_task("tool", "data_processor", {"dataset": "B"})
 wait_for_tasks([task1_id, task2_id], max_wait_time=30)
+# 定义解析函数
+import json, re
+def parse_task_results(results_string):
+    match = re.search(r'# RESULTS_DICT_JSON: (.+)', results_string)
+    return json.loads(match.group(1)) if match else {}
+
 results_str = get_task_results([task1_id, task2_id])
 results_dict = parse_task_results(results_str)
 
@@ -873,8 +859,14 @@ wait_for_tasks([tool_task, agent_task])
 - 如果这个任务可以拆分为多个独立的子任务，考虑使用submit_task并行执行
 - 提交任务后，使用wait_for_tasks等待完成，而不是立即检查
 - 对于耗时操作，优先考虑异步处理
-- 使用get_task_results批量获取多个任务的结果，然后用parse_task_results解析：
+- 使用get_task_results批量获取多个任务的结果，然后定义解析函数来提取结果字典：
   ```python
+  # 定义解析函数
+  import json, re
+  def parse_task_results(results_string):
+      match = re.search(r'# RESULTS_DICT_JSON: (.+)', results_string)
+      return json.loads(match.group(1)) if match else {{}}
+  
   results_str = get_task_results(task_ids, include_failed=True)
   results_dict = parse_task_results(results_str)
   # 直接通过任务ID访问结果
@@ -913,6 +905,7 @@ def create_async_agent(tools: List[Tool] = None, managed_agents: List = None,
         tools=tools or [],
         model=model,
         managed_agents=managed_agents or [],
+        additional_authorized_imports=['*'],
         **kwargs
     )
     

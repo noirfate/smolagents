@@ -154,47 +154,57 @@ class DatabaseQueryTool(Tool):
         return result
 
 
-# 模拟一个Managed Agent
-class DataScientistAgent:
-    """数据科学家Agent - 专门处理复杂的数据科学任务"""
+# 创建数据科学家CodeAgent的函数
+def create_data_scientist_agent(model):
+    """创建专门的数据科学家CodeAgent"""
+    from smolagents import CodeAgent
     
-    def __init__(self):
-        self.name = "data_scientist"
-        self.description = "Expert data scientist for advanced analytics and machine learning tasks"
-    
-    def __call__(self, task: str, additional_args: dict = None) -> str:
-        """执行数据科学任务"""
-        print(f"🔬 Data Scientist Agent: {task}")
-        
-        # 模拟复杂的数据科学工作
-        processing_time = random.uniform(3, 8)
-        time.sleep(processing_time)
-        
-        # 生成模拟结果
-        result = f"""
-Data Science Analysis Complete:
+    data_scientist_prompt = """你是一位专业的数据科学家AI助手，专门处理复杂的数据科学和机器学习任务。
 
-Task: {task}
-Processing Time: {processing_time:.1f} seconds
-Additional Context: {additional_args if additional_args else 'None'}
+你的专长包括：
+- 数据分析和统计建模
+- 机器学习算法设计和优化  
+- 预测模型构建
+- 数据可视化
+- 业务洞察提取
 
-Findings:
-• Applied advanced statistical methods
-• Identified key patterns and anomalies  
-• Generated predictive models with 87% accuracy
-• Recommended optimization strategies
+当收到任务时，你需要：
+1. 分析任务要求和提供的数据
+2. 选择合适的算法和方法
+3. 进行模拟的数据处理和建模（使用sleep模拟计算时间）
+4. 生成详细的分析报告，包括：
+   - 使用的方法和算法
+   - 关键发现和洞察
+   - 模型性能指标
+   - 业务建议
 
-Technical Details:
-- Algorithm: Random Forest with feature selection
-- Cross-validation score: 0.89
-- Feature importance: [price: 0.34, location: 0.28, time: 0.21, ...]
-- Model confidence: High
+注意：
+- 使用python_interpreter工具执行 `import time; time.sleep(随机3-8秒)` 来模拟复杂计算的耗时
+- 在sleep期间可以输出"正在进行复杂的机器学习计算..."等状态信息
+- 提供具体的技术细节和数值结果（可以模拟合理的数值）
+- 保持专业的数据科学术语和分析思路
+- 最后用final_answer输出完整的分析报告
 
-Completed at: {time.strftime('%H:%M:%S')}
+工作流程示例：
+1. 首先分析任务和数据
+2. 使用python_interpreter执行: `import time, random; processing_time = random.uniform(3, 8); print(f"开始复杂的机器学习计算，预计需要{processing_time:.1f}秒..."); time.sleep(processing_time); print("计算完成！")`
+3. 生成详细的分析报告
 """
-        
-        print(f"✅ Data Science task completed")
-        return result.strip()
+    
+    # 导入sleep工具用于模拟计算时间
+    from smolagents.default_tools import PythonInterpreterTool
+    
+    # 创建数据科学家CodeAgent
+    data_scientist = CodeAgent(
+        tools=[PythonInterpreterTool()],  # 提供Python工具用于计算和sleep
+        model=model,
+        instructions=data_scientist_prompt,  # CodeAgent使用instructions而不是system_prompt
+        max_steps=10,
+        name="data_scientist",  # 直接在构造函数中设置name
+        description="Expert data scientist for advanced analytics and machine learning tasks"  # 直接设置description
+    )
+    
+    return data_scientist
 
 
 def run_complex_scenario():
@@ -203,6 +213,14 @@ def run_complex_scenario():
     print("🚀 Starting Async Agent Demo")
     print("="*60)
     
+    # 创建模型
+    model = LiteLLMModel(
+        model_id="litellm_proxy/deepseek-v3.1",
+        api_key=os.getenv("API_KEY"),
+        base_url=os.getenv("BASE_URL"),
+        max_completion_tokens=8192
+    )
+    
     # 创建工具和agents
     tools = [
         DataAnalysisTool(),
@@ -210,15 +228,9 @@ def run_complex_scenario():
         DatabaseQueryTool()
     ]
     
-    managed_agents = [DataScientistAgent()]
-    
-    # 创建智能异步CodeAgent
-    model = LiteLLMModel(
-        model_id="litellm_proxy/deepseek-v3.1",
-        api_key=os.getenv("API_KEY"),
-        base_url=os.getenv("BASE_URL"),
-        max_completion_tokens=8192
-    )
+    # 创建真实的数据科学家CodeAgent
+    data_scientist = create_data_scientist_agent(model)
+    managed_agents = [data_scientist]
     
     async_agent = create_async_agent(
         tools=tools,
@@ -237,7 +249,7 @@ def run_complex_scenario():
         print("🎯 Scenario 1: Complex Data Analysis Project")
         print("="*60)
         
-        scenario1_task = """
+        task = """
 我需要完成一个综合的数据分析项目，包含以下任务：
 
 1. 分析三个不同的数据集：
@@ -257,68 +269,8 @@ def run_complex_scenario():
 合理安排任务顺序，并在适当的时候等待任务完成。
 """
         
-        result1 = async_agent.run_with_async_guidance(scenario1_task)
-        print(f"\n✅ Scenario 1 Result:\n{result1}")
-        
-        # 场景2：实时监控和响应
-        print("\n" + "="*60)
-        print("🎯 Scenario 2: Real-time Monitoring and Response")
-        print("="*60)
-        
-        scenario2_task = """
-我需要建立一个实时监控系统，要求如下：
-
-1. 同时监控5个不同的数据源：
-   - website_traffic (需要摘要分析)
-   - api_performance (需要趋势分析)
-   - user_activity (需要关联分析)
-   - system_metrics (需要异常检测)
-   - business_kpi (需要预测分析)
-
-2. 并行查询历史基线数据进行对比
-
-3. 如果发现异常，立即生成告警报告
-
-请实现这个监控系统，确保所有数据源都能并行处理，
-并在检测到问题时快速响应。
-"""
-        
-        result2 = async_agent.run_with_async_guidance(scenario2_task)
-        print(f"\n✅ Scenario 2 Result:\n{result2}")
-        
-        # 场景3：批处理优化
-        print("\n" + "="*60)
-        print("🎯 Scenario 3: Batch Processing Optimization")
-        print("="*60)
-        
-        scenario3_task = """
-我有一个批处理任务需要优化，包括：
-
-1. 处理10个数据集，每个都需要不同类型的分析
-2. 为每个数据集生成单独的报告
-3. 最后生成一个汇总报告
-
-传统方法是串行处理，需要很长时间。请帮我设计一个并行处理方案，
-最大化利用异步执行能力，减少总体处理时间。
-
-数据集列表：dataset_1 到 dataset_10
-分析类型：交替使用 trend, correlation, summary, prediction
-"""
-        
-        result3 = async_agent.run_with_async_guidance(scenario3_task)
-        print(f"\n✅ Scenario 3 Result:\n{result3}")
-        
-        # 显示最终统计
-        print("\n" + "="*60)
-        print("📊 Final Statistics")
-        print("="*60)
-        
-        stats = async_agent.task_manager.get_statistics()
-        print(f"Total tasks submitted: {stats['total_submitted']}")
-        print(f"Total tasks completed: {stats['total_completed']}")
-        print(f"Total tasks failed: {stats['total_failed']}")
-        print(f"Tasks still pending: {stats['pending']}")
-        print(f"Tasks still running: {stats['running']}")
+        result = async_agent.run_with_async_guidance(task)
+        print(f"\n✅ Result:\n{result}")
         
     except Exception as e:
         print(f"❌ Demo error: {e}")
