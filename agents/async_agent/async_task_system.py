@@ -327,7 +327,8 @@ class SubmitTaskTool(Tool):
                 task_id=task_id
             )
             
-            return f"Task submitted successfully! Task ID: {submitted_task_id}"
+            # 直接返回任务ID，这样可以在代码中直接使用
+            return submitted_task_id
             
         except Exception as e:
             return f"Failed to submit task: {str(e)}"
@@ -653,14 +654,13 @@ class WaitForTasksTool(Tool):
 
 
 class GetTaskResultsTool(Tool):
-    """批量获取任务结果的工具"""
+    """批量获取任务结果的工具 - 直接返回字典格式"""
     
     name = "get_task_results"
     description = """
-    Get results from multiple completed tasks at once. 
+    Get results from multiple completed tasks and return them as a dictionary.
+    Returns a dictionary mapping task_id -> result, making it easy to use in code.
     This is more efficient than checking tasks individually when you need results from several tasks.
-    Returns a formatted string with task results and embedded JSON dictionary.
-    Use parse_task_results() to extract the results dictionary for easy access to individual task results.
     """
     
     inputs = {
@@ -674,48 +674,32 @@ class GetTaskResultsTool(Tool):
             "nullable": True
         }
     }
-    output_type = "string"
+    output_type = "object"
     
-    def forward(self, task_ids: List[str], include_failed: bool = True) -> str:
-        """获取多个任务的结果，返回包含结果字典的特殊格式字符串"""
+    def forward(self, task_ids: list, include_failed: bool = True) -> dict:
+        """获取多个任务的结果，直接返回字典"""
         if not task_ids:
-            return "No task IDs provided\n\n# RESULTS_DICT_JSON: {}"
+            return {}
             
-        results = []
-        completed_count = 0
-        failed_count = 0
         results_dict = {}
         
         for task_id in task_ids:
             task_info = global_task_manager.get_task_result(task_id)
             
             if not task_info:
-                results.append(f"❌ Task {task_id}: NOT FOUND")
                 results_dict[task_id] = f"Task {task_id}: NOT FOUND"
                 continue
                 
             if task_info.status == TaskStatus.COMPLETED:
-                completed_count += 1
-                results.append(f"✅ Task {task_id}: {task_info.result}")
                 results_dict[task_id] = task_info.result
                 
             elif task_info.status == TaskStatus.FAILED and include_failed:
-                failed_count += 1
-                results.append(f"❌ Task {task_id}: FAILED - {task_info.error}")
                 results_dict[task_id] = f"FAILED - {task_info.error}"
                 
             elif task_info.status in [TaskStatus.PENDING, TaskStatus.RUNNING]:
-                results.append(f"⏳ Task {task_id}: {task_info.status.value.upper()}")
                 results_dict[task_id] = f"{task_info.status.value.upper()}"
         
-        summary = f"Results Summary: {completed_count} completed, {failed_count} failed\n"
-        summary += "="*50 + "\n"
-        summary += "\n".join(results)
-        
-        # 添加特殊的结果字典标记，用于解析
-        summary += f"\n\n# RESULTS_DICT_JSON: {json.dumps(results_dict)}"
-        
-        return summary
+        return results_dict
 
 class AsyncAgent:
     """
@@ -778,10 +762,10 @@ class AsyncAgent:
 5. **结果整合**: 将异步结果整合为最终答案
 
 ### 🛠️ 可用的异步工具
-- `submit_task`: 提交任务到异步队列（支持tool和managed_agent）
+- `submit_task`: 提交任务到异步队列（支持tool和managed_agent）- 直接返回任务ID
 - `wait_for_tasks`: 智能等待指定任务完成
 - `sleep`: 简单休眠等待
-- `get_task_results`: 批量获取任务结果
+- `get_task_results`: 批量获取任务结果（直接返回字典）
 - `check_task`: 检查单个任务状态
 - `list_tasks`: 列出所有任务
 
@@ -795,30 +779,27 @@ class AsyncAgent:
 ### 📝 示例异步模式
 
 ```python
-# 1. 并行数据处理
+# 1. 并行数据处理（推荐方式）
 task1_id = submit_task("tool", "data_processor", {"dataset": "A"})
 task2_id = submit_task("tool", "data_processor", {"dataset": "B"})
 wait_for_tasks([task1_id, task2_id], max_wait_time=30)
-# 定义解析函数
-import json, re
-def parse_task_results(results_string):
-    match = re.search(r'# RESULTS_DICT_JSON: (.+)', results_string)
-    return json.loads(match.group(1)) if match else {}
 
-results_str = get_task_results([task1_id, task2_id])
-results_dict = parse_task_results(results_str)
+# 使用get_task_results直接获取字典结果
+results_dict = get_task_results([task1_id, task2_id])
+result_a = results_dict[task1_id]
+result_b = results_dict[task2_id]
 
 # 2. 流水线处理
 step1_id = submit_task("tool", "preprocess", {"data": input_data})
 wait_for_tasks([step1_id])
-step1_results_str = get_task_results([step1_id])
-step1_results_dict = parse_task_results(step1_results_str)
-step2_id = submit_task("tool", "analyze", {"data": step1_results_dict[step1_id]})
+step1_results = get_task_results([step1_id])
+step2_id = submit_task("tool", "analyze", {"data": step1_results[step1_id]})
 
 # 3. 混合任务类型
 tool_task = submit_task("tool", "calculation", {...})
 agent_task = submit_task("managed_agent", "analyst", {...})
 wait_for_tasks([tool_task, agent_task])
+final_results = get_task_results([tool_task, agent_task])
 ```
 
 ### ⚠️ 重要提醒
@@ -859,16 +840,10 @@ wait_for_tasks([tool_task, agent_task])
 - 如果这个任务可以拆分为多个独立的子任务，考虑使用submit_task并行执行
 - 提交任务后，使用wait_for_tasks等待完成，而不是立即检查
 - 对于耗时操作，优先考虑异步处理
-- 使用get_task_results批量获取多个任务的结果，然后定义解析函数来提取结果字典：
+- 使用get_task_results批量获取多个任务的结果（直接返回字典）：
   ```python
-  # 定义解析函数
-  import json, re
-  def parse_task_results(results_string):
-      match = re.search(r'# RESULTS_DICT_JSON: (.+)', results_string)
-      return json.loads(match.group(1)) if match else {{}}
-  
-  results_str = get_task_results(task_ids, include_failed=True)
-  results_dict = parse_task_results(results_str)
+  # 直接获取字典结果
+  results_dict = get_task_results(task_ids, include_failed=True)
   # 直接通过任务ID访问结果
   sales_analysis = results_dict[sales_task_id]
   customer_analysis = results_dict[customer_task_id]
