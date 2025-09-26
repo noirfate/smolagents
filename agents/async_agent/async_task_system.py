@@ -22,7 +22,6 @@ class TaskStatus(Enum):
     RUNNING = "running"      # 执行中
     COMPLETED = "completed"  # 已完成
     FAILED = "failed"        # 执行失败
-    CANCELLED = "cancelled"  # 已取消
 
 
 @dataclass
@@ -175,14 +174,6 @@ class TaskManager:
                 tasks = [task for task in tasks if task.status == status_filter]
             return sorted(tasks, key=lambda x: x.created_at, reverse=True)
     
-    def cancel_task(self, task_id: str) -> bool:
-        """取消任务（仅对未开始的任务有效）"""
-        with self._lock:
-            task_info = self.task_results.get(task_id)
-            if task_info and task_info.status == TaskStatus.PENDING:
-                task_info.status = TaskStatus.CANCELLED
-                return True
-            return False
     
     def get_statistics(self) -> Dict[str, Any]:
         """获取统计信息"""
@@ -208,10 +199,6 @@ class TaskManager:
             try:
                 # 从队列中获取任务，超时1秒
                 task_info = self.task_queue.get(timeout=1.0)
-                
-                # 检查任务是否被取消
-                if task_info.status == TaskStatus.CANCELLED:
-                    continue
                 
                 # 提交到线程池执行
                 future = self.executor.submit(self._execute_task, task_info)
@@ -342,7 +329,7 @@ class CheckTaskTool(Tool):
     Check the status and result of a previously submitted task.
     
     Returns detailed information about the task including:
-    - Status (pending, running, completed, failed, cancelled)
+    - Status (pending, running, completed, failed)
     - Result (if completed successfully)
     - Error message (if failed)
     - Timing information
@@ -424,7 +411,7 @@ class ListTasksTool(Tool):
     inputs = {
         "status_filter": {
             "type": "string",
-            "description": "Filter by status: pending, running, completed, failed, cancelled (optional)",
+            "description": "Filter by status: pending, running, completed, failed (optional)",
             "nullable": True,
         },
         "limit": {
@@ -444,7 +431,7 @@ class ListTasksTool(Tool):
                 try:
                     status_enum = TaskStatus(status_filter.lower())
                 except ValueError:
-                    return f"Invalid status filter: {status_filter}. Valid values: pending, running, completed, failed, cancelled"
+                    return f"Invalid status filter: {status_filter}. Valid values: pending, running, completed, failed"
             
             # 获取任务列表
             tasks = global_task_manager.list_tasks(status_filter=status_enum)
@@ -542,7 +529,7 @@ class SleepTool(Tool):
     inputs = {
         "seconds": {
             "type": "number",
-            "description": "Number of seconds to sleep (can be decimal, e.g., 1.5 for 1.5 seconds)"
+            "description": "Number of seconds to sleep (recommend not exceeding 300 seconds)"
         },
         "reason": {
             "type": "string",
@@ -556,9 +543,6 @@ class SleepTool(Tool):
         """执行休眠"""
         if seconds < 0:
             return "Error: Sleep duration cannot be negative"
-        
-        if seconds > 60:  # 限制最大休眠时间，避免长时间卡住
-            seconds = 60
             
         reason_msg = f" (Reason: {reason})" if reason else ""
         print(f"😴 Sleeping for {seconds} seconds{reason_msg}")
@@ -586,7 +570,7 @@ class WaitForTasksTool(Tool):
         },
         "max_wait_time": {
             "type": "number", 
-            "description": "Maximum time to wait in seconds (default: 30)",
+            "description": "Maximum time to wait in seconds (default: 30, recommend not exceeding 300 seconds)",
             "nullable": True
         },
         "check_interval": {
@@ -742,7 +726,7 @@ class AsyncAgent:
         # 更新系统提示，指导agent使用异步功能
         self._enhance_system_prompt()
         
-        print(f"🧠 SmartAsyncAgent initialized with {len(self.base_agent.tools)} tools")
+        print(f"🧠 AsyncAgent initialized with {len(self.base_agent.tools)} tools")
         print(f"📋 Available async tools: {', '.join(async_tools.keys())}")
     
     def _enhance_system_prompt(self):
@@ -856,7 +840,7 @@ final_results = get_task_results([tool_task, agent_task])
     def shutdown(self):
         """关闭异步系统"""
         self.task_manager.stop()
-        print("🛑 SmartAsyncAgent shutdown")
+        print("🛑 AsyncAgent shutdown")
 
 
 def create_async_agent(tools: List[Tool] = None, managed_agents: List = None, 

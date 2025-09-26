@@ -12,18 +12,19 @@
 ## 🛠️ 系统组件
 
 ### 核心工具集
-- `submit_task` - 提交异步任务
+- `submit_task` - 提交异步任务（直接返回任务ID）
 - `wait_for_tasks` - 智能等待指定任务完成
 - `sleep` - 简单休眠等待
-- `get_task_results` - 批量获取任务结果
+- `get_task_results` - 批量获取任务结果（直接返回字典）
 - `check_task` - 检查单个任务状态
 - `list_tasks` - 列出所有任务
 
-### SmartAsyncAgent
+### AsyncAgent
 包装CodeAgent，提供：
 - 自动的系统提示增强
 - 智能异步工具集成
 - 任务管理器生命周期管理
+- 智能任务拆解和协调能力
 
 ## 📖 使用方法
 
@@ -75,12 +76,12 @@ Agent现在会自动：
 2. **智能等待**
    ```python
    # Agent会这样做：
-   task1 = submit_task("tool", "analyze_dataset", {...})
+   task1 = submit_task("tool", "analyze_dataset", {...})  # 直接返回任务ID
    task2 = submit_task("tool", "analyze_dataset", {...})  
    task3 = submit_task("tool", "analyze_dataset", {...})
    
    wait_for_tasks([task1, task2, task3], max_wait_time=30)
-   results = get_task_results([task1, task2, task3])
+   results = get_task_results([task1, task2, task3])  # 直接返回字典
    ```
 
 3. **错误处理和重试**
@@ -208,7 +209,8 @@ result = async_agent.run("请使用list_tasks工具显示所有任务状态")
 
 4. **结果收集阶段**
    ```python
-   results = get_task_results(task_ids)
+   results = get_task_results(task_ids)  # 直接返回字典 {task_id: result}
+   result1 = results[task_ids[0]]  # 直接使用结果
    ```
 
 5. **整合输出阶段**
@@ -238,13 +240,23 @@ Agent：我来为您设计一个高效的分析方案：
 1. 首先，我识别到这三个维度的分析可以并行执行
 2. 让我提交三个异步任务...
 
-提交销售数据分析任务...
-提交市场数据分析任务...  
-提交运营数据分析任务...
+# 提交任务（直接获得任务ID）
+sales_task = submit_task("tool", "analyze_sales", {"quarter": "Q1"})
+market_task = submit_task("tool", "analyze_market", {"quarter": "Q1"}) 
+ops_task = submit_task("tool", "analyze_operations", {"quarter": "Q1"})
 
-现在等待任务完成...
+# 智能等待所有任务完成
+wait_for_tasks([sales_task, market_task, ops_task], max_wait_time=60)
 
-所有分析任务已完成！让我整合结果为您生成综合报告...
+# 直接获取结果字典
+results = get_task_results([sales_task, market_task, ops_task])
+
+所有分析任务已完成！基于以下结果：
+- 销售分析：{results[sales_task]}
+- 市场分析：{results[market_task]}
+- 运营分析：{results[ops_task]}
+
+让我整合这些结果为您生成综合的季度业绩报告...
 ```
 
-这就是智能异步Agent的强大之处 - **Agent成为了任务协调者**，而不仅仅是工具执行者！
+这就是智能异步Agent的强大之处 - **Agent成为了任务协调者**，自动处理复杂的并行任务流程！
