@@ -23,6 +23,7 @@ __all__ = [
     "GetCommandOutputTool",
     "ListCommandsTool",
     "ClearCommandTool",
+    "GetCommandPageTool",
     "SearchCommandTool",
     "SearchAllCommandsTool",
     "ShellTools",
@@ -97,7 +98,7 @@ class CommandOutputManager:
             header += '\n'
         header += f"分页显示: 第 {current_page}/{total_pages} 页"
         if total_pages > 1:
-            header += f" (使用 cmd_page_up/cmd_page_down 翻页，使用 search_cmd 搜索内容)"
+            header += f" (使用 cmd_page_up/cmd_page_down 翻页，get_cmd_page 跳转页面，search_cmd 搜索内容)"
         header += "\n" + "=" * 50 + "\n"
         
         return header + self.viewport
@@ -211,6 +212,23 @@ class MultiCommandManager:
         if self.current_command_id == command_id:
             self.current_command_id = None
         return f"已清除命令 '{command_id}'"
+        
+    def get_page(self, command_id: str, page_number: int) -> str:
+        """获取指定页的内容"""
+        if command_id not in self.commands:
+            return f"错误：找不到命令ID '{command_id}'"
+        
+        manager = self.commands[command_id]
+        total_pages = len(manager.viewport_pages)
+        
+        if page_number < 1 or page_number > total_pages:
+            return f"错误：页码超出范围。有效范围：1-{total_pages}"
+        
+        # 设置当前页面（页码从1开始，索引从0开始）
+        manager.viewport_current_page = page_number - 1
+        self.current_command_id = command_id
+        
+        return manager.get_state()
         
     def search_in_command(self, command_id: str, keyword: str, context_lines: int = 1000) -> str:
         """在指定命令输出中搜索关键词"""
@@ -346,6 +364,26 @@ class ClearCommandTool(Tool):
     
     def forward(self, command_id: str) -> str:
         return _global_multi_manager.clear_command(command_id)
+
+
+class GetCommandPageTool(Tool):
+    """获取指定命令页内容工具"""
+    name = "get_cmd_page"
+    description = "直接跳转到指定命令输出的指定页面"
+    inputs = {
+        "command_id": {
+            "type": "string",
+            "description": "要查看的命令ID"
+        },
+        "page_number": {
+            "type": "integer",
+            "description": "要跳转的页码（从1开始）"
+        }
+    }
+    output_type = "string"
+    
+    def forward(self, command_id: str, page_number: int) -> str:
+        return _global_multi_manager.get_page(command_id, page_number)
 
 
 class SearchCommandTool(Tool):
@@ -709,6 +747,7 @@ class ShellTools:
             GetCommandOutputTool(),   # 获取指定命令输出
             ListCommandsTool(),       # 列出所有命令
             ClearCommandTool(),       # 清除命令输出
+            GetCommandPageTool(),     # 获取指定页内容
             SearchCommandTool(),      # 搜索指定命令输出
             SearchAllCommandsTool(),  # 搜索所有命令输出
         ])
