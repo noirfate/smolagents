@@ -17,16 +17,15 @@ from smolagents import (
     GitHubTools,
     GoalDriftCallback,
     PlanningStep,
-    WebTools,
     ListDirectoryTool,
     ReadFileTool,
     WriteFileTool,
     EditFileTool,
     FileSearchTool,
     FileContentSearchTool,
-    ExecuteCommandTool,
-    GetSystemInfoTool,
+    ShellTools,
 )
+from smolagents.web_tools import WebTools
 
 load_dotenv(override=True)
 
@@ -107,11 +106,12 @@ class POCValidationAgent:
         ]
         tools.extend(filesystem_tools)
 
-        shell_tools = [
-            ExecuteCommandTool(),      # 执行系统命令
-            GetSystemInfoTool(),       # 获取系统信息
-        ]
-        tools.extend(shell_tools)
+        # Shell工具 - 使用新的封装类
+        shell_tools = ShellTools(
+            default_page_size=20480,    # 20KB分页大小，超过此大小自动分页
+            include_system_info=True    # 包含系统信息工具
+        )
+        tools.extend(shell_tools.tools)
 
         agent = MemoryCompressedCodeAgent(
             model=self.model,

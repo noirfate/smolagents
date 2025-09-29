@@ -39,7 +39,7 @@ class VulnerabilityAnalysisWorkflow:
         
         # 初始化各阶段分析器
         self.collector = VulnerabilityInfoCollector(model, max_steps, search_engine)
-        self.analyzer = VulnerabilityAnalyzer(model, max_steps, search_engine)
+        self.analyzer = VulnerabilityAnalyzer(model, max_steps, search_engine, self.output_dir)
         self.exploiter = VulnerabilityExploiter(model, max_steps, search_engine)
         
         # 校验器（按需创建）
@@ -379,5 +379,25 @@ class VulnerabilityAnalysisWorkflow:
             print(f"\n❌ 执行过程中发生错误: {e}")
             import traceback
             traceback.print_exc()
+        finally:
+            # 显示已下载的仓库信息
+            if hasattr(self, 'analyzer') and self.analyzer:
+                repos = self.analyzer.list_repos()
+                if repos:
+                    print(f"📁 已缓存的代码仓库: {', '.join(repos)}")
+                    print(f"📍 仓库目录: {self.analyzer.get_repo_dir()}")
         
         return results
+    
+    def list_cached_repos(self):
+        """列出已缓存的代码仓库"""
+        if hasattr(self, 'analyzer') and self.analyzer:
+            repos = self.analyzer.list_repos()
+            if repos:
+                print(f"📁 已缓存的代码仓库: {', '.join(repos)}")
+                print(f"📍 仓库目录: {self.analyzer.get_repo_dir()}")
+                return repos
+            else:
+                print("📁 暂无缓存的代码仓库")
+                return []
+        return []

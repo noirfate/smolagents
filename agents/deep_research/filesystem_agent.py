@@ -20,10 +20,7 @@ from smolagents.filesystem_tools import (
 )
 
 # 导入Shell工具
-from smolagents.shell_tools import (
-    ExecuteCommandTool,
-    GetSystemInfoTool,
-)
+from smolagents import ShellTools
 
 
 def create_filesystem_agent(model: Model, max_steps: int = 30) -> CodeAgent:
@@ -47,11 +44,14 @@ def create_filesystem_agent(model: Model, max_steps: int = 30) -> CodeAgent:
         EditFileTool(),
         FileSearchTool(),
         FileContentSearchTool(),
-        
-        # Shell命令工具
-        ExecuteCommandTool(),
-        GetSystemInfoTool(),
     ]
+    
+    # Shell工具 - 使用新的封装类
+    shell_tools = ShellTools(
+        default_page_size=20480,    # 20KB分页大小，超过此大小自动分页
+        include_system_info=True    # 包含系统信息工具
+    )
+    filesystem_tools.extend(shell_tools.tools)
     
     filesystem_agent = CodeAgent(
         model=model,

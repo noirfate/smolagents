@@ -12,8 +12,7 @@ from smolagents import (
     EditFileTool,
     FileSearchTool,
     FileContentSearchTool,
-    ExecuteCommandTool,
-    GetSystemInfoTool,
+    ShellTools,
 )
 from smolagents.web_tools import WebTools
 
@@ -159,11 +158,11 @@ class CodeBrowserAgent:
         tools.extend(filesystem_tools)
 
         # Shell工具 - 用于执行CodeQL命令
-        shell_tools = [
-            ExecuteCommandTool(),      # 执行系统命令
-            GetSystemInfoTool(),       # 获取系统信息
-        ]
-        tools.extend(shell_tools)
+        shell_tools = ShellTools(
+            default_page_size=20480,    # 20KB分页大小，超过此大小自动分页
+            include_system_info=True    # 包含系统信息工具
+        )
+        tools.extend(shell_tools.tools)
 
         return tools
     
