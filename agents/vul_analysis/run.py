@@ -7,6 +7,7 @@ from vulnerability_validator import QualityControlConfig
 
 from smolagents import (
     LiteLLMModel,
+    OpenAIServerModel
 )
 
 load_dotenv(override=True)
@@ -108,12 +109,13 @@ def main():
     
     # 创建模型
     model_params = {
-        "model_id": f"litellm_proxy/{args.model_id}",
-        "max_completion_tokens": 8192,
+        "model_id": f"{args.model_id}",
+        #"max_completion_tokens": 8192,
         "api_key": os.getenv("API_KEY"),
-        "base_url": os.getenv("BASE_URL")
+        "api_base": os.getenv("BASE_URL")
     }
-    model = LiteLLMModel(**model_params)
+    #model = LiteLLMModel(**model_params)
+    model = OpenAIServerModel(**model_params)
     
     # 创建漏洞分析工作流
     workflow = VulnerabilityAnalysisWorkflow(

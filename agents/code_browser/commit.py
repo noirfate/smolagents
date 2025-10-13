@@ -75,7 +75,7 @@ def main():
     results = []
     for commit_id in commit_ids:
         commit_id = commit_id.strip()
-        task = f"""分析commit {commit_id}的代码，分析提交的作用和影响，判断其是否为bug修复或安全修复，安全修复的意思是修复了可利用的安全漏洞，回复格式为：
+        task = f"""分析commit {commit_id}的代码，分析提交的作用和影响，判断其是否为bug修复或安全修复，安全修复的意思是修复了可利用的安全漏洞，回复格式为**markdown格式纯文本**，不要使用json等其他格式：
         ### {commit_id}
         #### 结论
         是安全修复或不是安全修复

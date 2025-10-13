@@ -40,7 +40,7 @@ class VulnerabilityAnalysisWorkflow:
         # 初始化各阶段分析器
         self.collector = VulnerabilityInfoCollector(model, max_steps, search_engine)
         self.analyzer = VulnerabilityAnalyzer(model, max_steps, search_engine, self.output_dir)
-        self.exploiter = VulnerabilityExploiter(model, max_steps, search_engine)
+        self.exploiter = VulnerabilityExploiter(model, max_steps, search_engine, self.output_dir)
         
         # 校验器（按需创建）
         self.validator = None
