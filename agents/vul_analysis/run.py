@@ -4,6 +4,7 @@ import os
 from dotenv import load_dotenv
 from vul import VulnerabilityAnalysisWorkflow
 from vulnerability_validator import QualityControlConfig
+from poc import POCValidator
 
 from smolagents import (
     LiteLLMModel,
@@ -69,6 +70,11 @@ def parse_args():
         choices=["duckduckgo", "google"],
         help="搜索引擎选择，默认为duckduckgo"
     )
+    parser.add_argument(
+        "--poc-validate",
+        action="store_true",
+        help="启用POC验证（默认禁用）"
+    )
     return parser.parse_args()
 
 def setup_monitoring(enable_monitoring):
@@ -106,6 +112,7 @@ def main():
     if quality_config.enable_validation:
         print(f"   最大重试: {quality_config.max_retries}次")
         print(f"   最低分数: {quality_config.min_score_threshold}分")
+    print(f"   POC验证: {'是' if args.poc_validate else '否'}")
     
     # 创建模型
     model_params = {
@@ -132,6 +139,40 @@ def main():
         quality_config=quality_config,
         model_id=args.model_id
     )
+    
+    # POC验证（如果启用）
+    if args.poc_validate:
+        print("\n" + "="*60)
+        print("🧪 开始POC验证")
+        print("="*60)
+        
+        try:
+            # 创建POC验证器
+            poc_validator = POCValidator(model=model, max_steps=args.max_steps)
+            
+            # 查找最终报告文件
+            from pathlib import Path
+            output_path = Path(args.output_dir) / args.vulnerability_id
+            final_report_path = output_path / f"final_report_{args.vulnerability_id}.md"
+            
+            if final_report_path.exists():
+                print(f"📖 使用最终报告进行POC验证: {final_report_path}")
+                success = poc_validator.validate_vulnerability(
+                    report_path=str(final_report_path),
+                    output_dir=str(output_path)
+                )
+                if success:
+                    print("✅ POC验证完成")
+                else:
+                    print("❌ POC验证失败")
+            else:
+                print(f"⚠️ 未找到最终报告文件: {final_report_path}")
+                print("请先完成完整的漏洞分析（--stage all）再进行POC验证")
+                
+        except Exception as e:
+            print(f"❌ POC验证过程中发生错误: {e}")
+            import traceback
+            traceback.print_exc()
 
 if __name__ == "__main__":
     main()

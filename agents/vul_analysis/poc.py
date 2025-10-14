@@ -87,14 +87,6 @@ class POCValidationAgent:
         
         # 尝试添加GitHub工具
         tools = web_tools.tools
-        try:
-            github_token = os.getenv("GITHUB_TOKEN")
-            if github_token:
-                github_tools = GitHubTools(github_token)
-                tools.extend(github_tools.tools)
-                print(f"✅ 已添加 {len(github_tools.tools)} 个GitHub工具")
-        except Exception as e:
-            print(f"⚠️ GitHub工具初始化失败: {e}")
         
         filesystem_tools = [
             ListDirectoryTool(),      # 列出目录内容
@@ -193,7 +185,7 @@ class POCValidationAgent:
 - 在搭建的环境中执行POC代码，验证是否成功触发漏洞
 
 ### 3. 问题诊断阶段
-- 如果执行失败，分析失败原因
+- 如果执行失败，分析失败原因，可利用互联网搜索错误解决方案
 - 可能的问题包括：
   * 环境配置不正确
   * 缺少必要的依赖库
@@ -211,7 +203,7 @@ class POCValidationAgent:
 
 1. **镜像构建**: 使用dockerfile构建镜像时，不要设置超时时间，要等待其构建完成或异常退出
 2. **验证执行**: 切实在当前系统中执行验证，调用shell工具执行docker命令、POC脚本或其他必要的命令
-3. **持续调试**: 如果执行失败，要有耐心进行多轮改进调试
+3. **持续调试**: 分析执行过程中的错误信息并进行持续改进，可利用工具在互联网上搜素解决方案
 4. **完整验证**: 确保验证结果的可信度和完整性
 
 现在开始执行POC验证任务。工作目录为: {output_path}
