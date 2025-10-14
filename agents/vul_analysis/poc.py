@@ -74,16 +74,17 @@ class VulnerabilityReportReader:
 class POCValidationAgent:
     """POC验证Agent - 基于大模型的智能漏洞复现验证器"""
     
-    def __init__(self, model, max_steps=50):
+    def __init__(self, model, max_steps=50, search_engine="duckduckgo"):
         self.model = model
         self.max_steps = max_steps
+        self.search_engine = search_engine
         self.agent = self._create_agent()
     
     def _create_agent(self):
         """创建专门用于POC验证的智能agent"""
         
         # 基础工具
-        web_tools = WebTools(model=self.model, text_limit=100000, search_engine="duckduckgo")
+        web_tools = WebTools(model=self.model, text_limit=100000, search_engine=self.search_engine)
         
         # 尝试添加GitHub工具
         tools = web_tools.tools
@@ -215,11 +216,11 @@ class POCValidationAgent:
 class POCValidator:
     """POC验证器主类"""
     
-    def __init__(self, model, max_steps=50):
+    def __init__(self, model, max_steps=50, search_engine="duckduckgo"):
         self.model = model
         self.max_steps = max_steps
         self.report_reader = VulnerabilityReportReader()
-        self.poc_agent = POCValidationAgent(model, max_steps)
+        self.poc_agent = POCValidationAgent(model, max_steps, search_engine)
     
     def validate_vulnerability(self, report_path: str, output_dir: str) -> bool:
         """验证指定漏洞的POC"""
@@ -289,6 +290,13 @@ def parse_args():
         action="store_true",
         help="启用Phoenix监控"
     )
+    parser.add_argument(
+        "--search-engine",
+        type=str,
+        default="duckduckgo",
+        choices=["duckduckgo", "google"],
+        help="搜索引擎选择，默认为duckduckgo"
+    )
     
     return parser.parse_args()
 
@@ -340,7 +348,7 @@ def main():
     print(f"📁 输出目录: {args.output_dir}")
     
     # 创建验证器并执行验证
-    validator = POCValidator(model, args.max_steps)
+    validator = POCValidator(model, args.max_steps, args.search_engine)
     
     try:
         success = validator.validate_vulnerability(args.report_path, args.output_dir)

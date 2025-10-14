@@ -17,9 +17,9 @@ __all__ = [
 class MemoryCompressedToolCallingAgent(ToolCallingAgent):
     """集成记忆压缩功能的ToolCallingAgent"""
     
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, memory_dir=".", **kwargs):
         super().__init__(*args, **kwargs)
-        self.memory_manager = MemoryManager()
+        self.memory_manager = MemoryManager(memory_dir=memory_dir)
     
     def _original_write_memory_to_messages(self, summary_mode: bool = False) -> List[ChatMessage]:
         """调用父类的原始write_memory_to_messages方法，避免递归"""
@@ -33,9 +33,9 @@ class MemoryCompressedToolCallingAgent(ToolCallingAgent):
 class MemoryCompressedCodeAgent(CodeAgent):
     """集成记忆压缩功能的CodeAgent"""
     
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, memory_dir=".", **kwargs):
         super().__init__(*args, **kwargs)
-        self.memory_manager = MemoryManager()
+        self.memory_manager = MemoryManager(memory_dir=memory_dir)
     
     def _original_write_memory_to_messages(self, summary_mode: bool = False) -> List[ChatMessage]:
         """调用父类的原始write_memory_to_messages方法，避免递归"""

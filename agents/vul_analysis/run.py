@@ -148,7 +148,7 @@ def main():
         
         try:
             # 创建POC验证器
-            poc_validator = POCValidator(model=model, max_steps=args.max_steps)
+            poc_validator = POCValidator(model=model, max_steps=args.max_steps, search_engine=args.search_engine)
             
             # 查找最终报告文件
             from pathlib import Path
