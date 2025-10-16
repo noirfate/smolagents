@@ -15,6 +15,15 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 from smolagents import Tool
 
+# OpenTelemetry context propagation
+try:
+    from opentelemetry import context, trace
+    from opentelemetry.context import Context
+    OTEL_AVAILABLE = True
+except ImportError:
+    OTEL_AVAILABLE = False
+    Context = None
+
 
 class TaskStatus(Enum):
     """任务状态枚举"""
@@ -37,18 +46,21 @@ class TaskInfo:
     completed_at: Optional[float] = None
     result: Any = None
     error: Optional[str] = None
+    otel_context: Any = None  # 存储 OpenTelemetry context
     
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典格式"""
         data = asdict(self)
         data['status'] = self.status.value
+        # 不序列化 otel_context，因为它不能被序列化
+        data.pop('otel_context', None)
         return data
 
 
 class TaskManager:
     """任务管理器 - 管理任务队列和执行结果"""
     
-    def __init__(self, max_workers: int = 3):
+    def __init__(self, max_workers: int = 5):
         """
         初始化任务管理器
         
@@ -77,9 +89,83 @@ class TaskManager:
             self.tools.update(tools)
     
     def register_managed_agents(self, managed_agents: Dict[str, Any]):
-        """注册可用的managed agents"""
+        """注册可用的managed agents，同时保存初始化参数用于克隆"""
         with self._lock:
             self.managed_agents.update(managed_agents)
+            # 保存每个 agent 的初始化信息，用于创建副本
+            if not hasattr(self, '_agent_init_params'):
+                self._agent_init_params = {}
+            
+            for name, agent in managed_agents.items():
+                # 提取 agent 的初始化参数
+                init_params = self._extract_agent_init_params(agent)
+                self._agent_init_params[name] = init_params
+    
+    def _extract_agent_init_params(self, agent) -> Dict[str, Any]:
+        """提取 agent 的初始化参数"""
+        params = {}
+        
+        # 基础参数（从实例属性提取）
+        if hasattr(agent, 'tools'):
+            params['tools'] = agent.tools if isinstance(agent.tools, list) else list(agent.tools.values())
+        if hasattr(agent, 'model'):
+            params['model'] = agent.model
+        if hasattr(agent, 'prompt_templates'):
+            params['prompt_templates'] = agent.prompt_templates
+        if hasattr(agent, 'instructions'):
+            params['instructions'] = agent.instructions
+        if hasattr(agent, 'max_steps'):
+            params['max_steps'] = agent.max_steps
+        if hasattr(agent, 'managed_agents'):
+            params['managed_agents'] = list(agent.managed_agents.values()) if isinstance(agent.managed_agents, dict) else agent.managed_agents
+        if hasattr(agent, 'planning_interval'):
+            params['planning_interval'] = agent.planning_interval
+        if hasattr(agent, 'name'):
+            params['name'] = agent.name
+        if hasattr(agent, 'description'):
+            params['description'] = agent.description
+        if hasattr(agent, 'provide_run_summary'):
+            params['provide_run_summary'] = agent.provide_run_summary
+        if hasattr(agent, 'return_full_result'):
+            params['return_full_result'] = agent.return_full_result
+        if hasattr(agent, 'logger') and hasattr(agent.logger, 'level'):
+            params['verbosity_level'] = agent.logger.level
+        
+        # CodeAgent 特定参数
+        if hasattr(agent, 'additional_authorized_imports'):
+            params['additional_authorized_imports'] = agent.additional_authorized_imports
+        if hasattr(agent, 'max_print_outputs_length'):
+            params['max_print_outputs_length'] = agent.max_print_outputs_length
+        if hasattr(agent, 'stream_outputs'):
+            params['stream_outputs'] = agent.stream_outputs
+        if hasattr(agent, '_use_structured_outputs_internally'):
+            params['use_structured_outputs_internally'] = agent._use_structured_outputs_internally
+        if hasattr(agent, 'code_block_tags'):
+            params['code_block_tags'] = agent.code_block_tags
+        
+        # ToolCallingAgent 特定参数
+        if hasattr(agent, 'max_tool_threads'):
+            params['max_tool_threads'] = agent.max_tool_threads
+        
+        return params
+    
+    def _create_agent_copy(self, agent_name: str):
+        """使用保存的初始化参数创建 agent 的新实例"""
+        if agent_name not in self._agent_init_params:
+            raise ValueError(f"No init params found for agent '{agent_name}'")
+        
+        original_agent = self.managed_agents[agent_name]
+        init_params = self._agent_init_params[agent_name]
+        
+        # 获取 agent 的类
+        agent_class = original_agent.__class__
+        
+        # 创建新实例
+        try:
+            new_agent = agent_class(**init_params)
+            return new_agent
+        except Exception as e:
+            raise RuntimeError(f"Failed to create agent copy: {e}") from e
     
     def start(self):
         """启动任务管理器"""
@@ -109,7 +195,7 @@ class TaskManager:
         print("🛑 TaskManager stopped")
     
     def submit_task(
-        self, 
+        self,
         task_type: str, 
         target_name: str, 
         arguments: Dict[str, Any],
@@ -132,11 +218,43 @@ class TaskManager:
             
         task_id = task_id or str(uuid.uuid4())
         
-        # 验证目标是否存在
-        if task_type == "tool" and target_name not in self.tools:
-            raise ValueError(f"Tool '{target_name}' not found")
-        elif task_type == "managed_agent" and target_name not in self.managed_agents:
-            raise ValueError(f"Managed agent '{target_name}' not found")
+        # 验证目标是否存在，并提供友好的错误提示
+        if task_type == "tool":
+            if target_name not in self.tools:
+                # 检查是否误用了 managed_agent 的名称
+                if target_name in self.managed_agents:
+                    raise ValueError(
+                        f"'{target_name}' is a managed agent, not a tool. "
+                        f"Please use task_type='managed_agent' instead of 'tool'.\n"
+                    )
+                else:
+                    raise ValueError(
+                        f"Tool '{target_name}' not found.\n"
+                    )
+        elif task_type == "managed_agent":
+            if target_name not in self.managed_agents:
+                # 检查是否误用了 tool 的名称
+                if target_name in self.tools:
+                    raise ValueError(
+                        f"'{target_name}' is a tool, not a managed agent. "
+                        f"Please use task_type='tool' instead of 'managed_agent'.\n"
+                    )
+                else:
+                    raise ValueError(
+                        f"Managed agent '{target_name}' not found.\n"
+                    )
+        else:
+            raise ValueError(
+                f"Invalid task_type '{task_type}'. Must be 'tool' or 'managed_agent'."
+            )
+        
+        # 捕获当前的 OpenTelemetry context
+        otel_ctx = None
+        if OTEL_AVAILABLE:
+            try:
+                otel_ctx = context.get_current()
+            except Exception as e:
+                print(f"⚠️ Warning: Failed to capture OpenTelemetry context: {e}")
         
         task_info = TaskInfo(
             task_id=task_id,
@@ -144,7 +262,8 @@ class TaskManager:
             target_name=target_name,
             arguments=arguments,
             status=TaskStatus.PENDING,
-            created_at=time.time()
+            created_at=time.time(),
+            otel_context=otel_ctx
         )
         
         with self._lock:
@@ -216,6 +335,14 @@ class TaskManager:
         """执行单个任务"""
         task_id = task_info.task_id
         
+        # 恢复 OpenTelemetry context（如果存在）
+        token = None
+        if OTEL_AVAILABLE and task_info.otel_context is not None:
+            try:
+                token = context.attach(task_info.otel_context)
+            except Exception as e:
+                print(f"⚠️ Warning: Failed to attach OpenTelemetry context for task {task_id}: {e}")
+        
         try:
             # 更新任务状态为执行中
             with self._lock:
@@ -233,8 +360,11 @@ class TaskManager:
                     result = tool(task_info.arguments)
             
             elif task_info.task_type == "managed_agent":
-                agent = self.managed_agents[task_info.target_name]
+                agent = self._create_agent_copy(task_info.target_name)
+                
                 if isinstance(task_info.arguments, dict):
+                    if 'max_steps' not in task_info.arguments:
+                        task_info.arguments['max_steps'] = 20
                     result = agent(**task_info.arguments)
                 else:
                     result = agent(task_info.arguments)
@@ -251,6 +381,21 @@ class TaskManager:
             
             print(f"✅ Task completed: {task_id}")
             
+        except UnboundLocalError as e:
+            # 特殊处理UnboundLocalError - 通常是agent执行异常但未返回final_answer
+            error_msg = f"Agent execution incomplete: The agent encountered an error before generating a final answer. " \
+                       f"This usually means the agent hit an error during execution or needs more steps. " \
+                       f"Original error: {str(e)}"
+            
+            with self._lock:
+                task_info.status = TaskStatus.FAILED
+                task_info.completed_at = time.time()
+                task_info.error = error_msg
+                self.total_failed += 1
+            
+            print(f"❌ Task failed (incomplete execution): {task_id}")
+            print(f"   💡 Suggestion: Try increasing max_steps or check for errors in agent execution")
+            
         except Exception as e:
             # 任务执行失败
             error_msg = f"{type(e).__name__}: {str(e)}"
@@ -263,10 +408,14 @@ class TaskManager:
             
             print(f"❌ Task failed: {task_id} - {error_msg}")
             traceback.print_exc()
-
-
-# 全局任务管理器实例
-global_task_manager = TaskManager()
+        
+        finally:
+            # 恢复原来的 context
+            if OTEL_AVAILABLE and token is not None:
+                try:
+                    context.detach(token)
+                except Exception as e:
+                    print(f"⚠️ Warning: Failed to detach OpenTelemetry context for task {task_id}: {e}")
 
 
 class SubmitTaskTool(Tool):
@@ -304,10 +453,14 @@ class SubmitTaskTool(Tool):
     }
     output_type = "string"
     
+    def __init__(self, task_manager: TaskManager):
+        super().__init__()
+        self.task_manager = task_manager
+    
     def forward(self, task_type: str, target_name: str, arguments: dict, task_id: str = None) -> str:
         """提交任务"""
         try:
-            submitted_task_id = global_task_manager.submit_task(
+            submitted_task_id = self.task_manager.submit_task(
                 task_type=task_type,
                 target_name=target_name,
                 arguments=arguments,
@@ -348,9 +501,13 @@ class CheckTaskTool(Tool):
     }
     output_type = "string"
     
+    def __init__(self, task_manager: TaskManager):
+        super().__init__()
+        self.task_manager = task_manager
+    
     def forward(self, task_id: str, format: str = "summary") -> str:
         """检查任务状态和结果"""
-        task_info = global_task_manager.get_task_result(task_id)
+        task_info = self.task_manager.get_task_result(task_id)
         
         if not task_info:
             return f"Task not found: {task_id}"
@@ -422,6 +579,10 @@ class ListTasksTool(Tool):
     }
     output_type = "string"
     
+    def __init__(self, task_manager: TaskManager):
+        super().__init__()
+        self.task_manager = task_manager
+    
     def forward(self, status_filter: str = None, limit: int = 10) -> str:
         """列出任务"""
         try:
@@ -434,7 +595,7 @@ class ListTasksTool(Tool):
                     return f"Invalid status filter: {status_filter}. Valid values: pending, running, completed, failed"
             
             # 获取任务列表
-            tasks = global_task_manager.list_tasks(status_filter=status_enum)
+            tasks = self.task_manager.list_tasks(status_filter=status_enum)
             
             if not tasks:
                 return "No tasks found."
@@ -458,7 +619,7 @@ class ListTasksTool(Tool):
                 )
             
             # 添加统计信息
-            stats = global_task_manager.get_statistics()
+            stats = self.task_manager.get_statistics()
             lines.append("-" * 50)
             lines.append(f"Total: {stats['total_submitted']} | "
                         f"Completed: {stats['total_completed']} | "
@@ -471,48 +632,6 @@ class ListTasksTool(Tool):
         except Exception as e:
             return f"Error listing tasks: {str(e)}"
 
-
-class AsyncToolCallingAgent:
-    """支持异步任务执行的ToolCallingAgent包装器"""
-    
-    def __init__(self, base_agent, max_workers: int = 3):
-        """
-        初始化异步Agent
-        
-        Args:
-            base_agent: 基础的ToolCallingAgent实例
-            max_workers: 最大工作线程数
-        """
-        self.base_agent = base_agent
-        self.task_manager = global_task_manager
-        
-        # 注册基础agent的工具和managed agents
-        self.task_manager.register_tools(base_agent.tools)
-        if hasattr(base_agent, 'managed_agents'):
-            self.task_manager.register_managed_agents(base_agent.managed_agents)
-        
-        # 添加异步任务工具到基础agent
-        async_tools = {
-            "submit_task": SubmitTaskTool(),
-            "check_task": CheckTaskTool(), 
-            "list_tasks": ListTasksTool(),
-        }
-        
-        self.base_agent.tools.update(async_tools)
-        
-        # 启动任务管理器
-        self.task_manager.start()
-        
-        print(f"🚀 AsyncToolCallingAgent initialized with {len(self.base_agent.tools)} tools")
-    
-    def __getattr__(self, name):
-        """代理所有其他属性和方法到基础agent"""
-        return getattr(self.base_agent, name)
-    
-    def shutdown(self):
-        """关闭异步系统"""
-        self.task_manager.stop()
-        print("🛑 AsyncToolCallingAgent shutdown")
 
 class SleepTool(Tool):
     """让Agent能够主动休眠等待的工具"""
@@ -560,18 +679,15 @@ class WaitForTasksTool(Tool):
     Wait for specific tasks to complete. This tool will periodically check task status
     and return when all specified tasks are finished (completed or failed).
     
-    More intelligent than simple sleep - it actively monitors task progress.
+    This tool will wait indefinitely until all tasks are done. Use this after submitting tasks
+    to ensure they complete before proceeding. More intelligent than simple sleep - it actively 
+    monitors task progress and returns immediately when all tasks are done.
     """
     
     inputs = {
         "task_ids": {
             "type": "array",
             "description": "List of task IDs to wait for"
-        },
-        "max_wait_time": {
-            "type": "number", 
-            "description": "Maximum time to wait in seconds (default: 30, recommend not exceeding 300 seconds)",
-            "nullable": True
         },
         "check_interval": {
             "type": "number",
@@ -581,7 +697,11 @@ class WaitForTasksTool(Tool):
     }
     output_type = "string"
     
-    def forward(self, task_ids: List[str], max_wait_time: float = 30, check_interval: float = 1) -> str:
+    def __init__(self, task_manager: TaskManager):
+        super().__init__()
+        self.task_manager = task_manager
+    
+    def forward(self, task_ids: List[str], check_interval: float = 1) -> str:
         """等待任务完成"""
         if not task_ids:
             return "No task IDs provided"
@@ -592,14 +712,15 @@ class WaitForTasksTool(Tool):
         
         print(f"⏳ Waiting for {len(task_ids)} tasks to complete...")
         
-        while time.time() - start_time < max_wait_time:
+        while True:
             all_done = True
             current_status = {}
             
             for task_id in task_ids:
-                task_info = global_task_manager.get_task_result(task_id)
+                task_info = self.task_manager.get_task_result(task_id)
                 if not task_info:
                     current_status[task_id] = "NOT_FOUND"
+                    # 如果任务不存在，视为完成（可能是ID错误）
                     continue
                     
                 status = task_info.status
@@ -616,7 +737,7 @@ class WaitForTasksTool(Tool):
             
             if all_done:
                 elapsed = time.time() - start_time
-                result = f"All tasks completed in {elapsed:.1f} seconds!\n"
+                result = f"✅ All tasks completed in {elapsed:.1f} seconds!\n"
                 result += f"Completed: {len(completed_tasks)}, Failed: {len(failed_tasks)}\n"
                 
                 if completed_tasks:
@@ -626,15 +747,13 @@ class WaitForTasksTool(Tool):
                     
                 return result
             
-            # 显示当前状态
-            status_summary = ", ".join([f"{tid[:8]}:{status}" for tid, status in current_status.items()])
-            print(f"⏳ Status: {status_summary}")
+            # 显示当前状态（每5秒显示一次，避免输出过多）
+            elapsed = time.time() - start_time
+            if int(elapsed) % 5 == 0 or elapsed < 5:
+                status_summary = ", ".join([f"{tid[:8]}:{status}" for tid, status in current_status.items()])
+                print(f"⏳ [{int(elapsed)}s] Status: {status_summary}")
             
             time.sleep(check_interval)
-        
-        # 超时
-        elapsed = time.time() - start_time
-        return f"Timeout after {elapsed:.1f} seconds. Some tasks may still be running. Completed: {len(completed_tasks)}, Failed: {len(failed_tasks)}"
 
 
 class GetTaskResultsTool(Tool):
@@ -660,6 +779,10 @@ class GetTaskResultsTool(Tool):
     }
     output_type = "object"
     
+    def __init__(self, task_manager: TaskManager):
+        super().__init__()
+        self.task_manager = task_manager
+    
     def forward(self, task_ids: list, include_failed: bool = True) -> dict:
         """获取多个任务的结果，直接返回字典"""
         if not task_ids:
@@ -668,7 +791,7 @@ class GetTaskResultsTool(Tool):
         results_dict = {}
         
         for task_id in task_ids:
-            task_info = global_task_manager.get_task_result(task_id)
+            task_info = self.task_manager.get_task_result(task_id)
             
             if not task_info:
                 results_dict[task_id] = f"Task {task_id}: NOT FOUND"
@@ -700,21 +823,22 @@ class AsyncAgent:
             max_workers: 最大工作线程数
         """
         self.base_agent = base_agent
-        self.task_manager = global_task_manager
+        # 每个 AsyncAgent 有自己的 TaskManager 实例
+        self.task_manager = TaskManager(max_workers=max_workers)
         
         # 注册基础agent的工具和managed agents
         self.task_manager.register_tools(base_agent.tools)
         if hasattr(base_agent, 'managed_agents'):
             self.task_manager.register_managed_agents(base_agent.managed_agents)
         
-        # 添加智能异步工具
+        # 添加智能异步工具（传入 task_manager 实例）
         async_tools = {
-            "submit_task": SubmitTaskTool(),
-            "check_task": CheckTaskTool(),
-            "list_tasks": ListTasksTool(),
+            "submit_task": SubmitTaskTool(self.task_manager),
+            "check_task": CheckTaskTool(self.task_manager),
+            "list_tasks": ListTasksTool(self.task_manager),
             "sleep": SleepTool(),
-            "wait_for_tasks": WaitForTasksTool(),
-            "get_task_results": GetTaskResultsTool(),
+            "wait_for_tasks": WaitForTasksTool(self.task_manager),
+            "get_task_results": GetTaskResultsTool(self.task_manager),
         }
         
         # 将异步工具添加到基础agent
@@ -726,71 +850,127 @@ class AsyncAgent:
         # 更新系统提示，指导agent使用异步功能
         self._enhance_system_prompt()
         
+        # 打印初始化信息
         print(f"🧠 AsyncAgent initialized with {len(self.base_agent.tools)} tools")
+        print(f"⚡ Max concurrent tasks (max_workers): {self.task_manager.max_workers}")
         print(f"📋 Available async tools: {', '.join(async_tools.keys())}")
+        
+        # 显示可用资源
+        available_tools = [t for t in self.task_manager.tools.keys() if t not in async_tools]
+        available_agents = list(self.task_manager.managed_agents.keys())
+        
+        if available_tools:
+            print(f"🛠️  Available Tools (task_type='tool'): {', '.join(available_tools)}")
+        if available_agents:
+            print(f"🤖 Available Managed Agents (task_type='managed_agent'): {', '.join(available_agents)}")
     
     def _enhance_system_prompt(self):
         """增强系统提示，指导agent进行异步任务管理"""
         
-        async_guidance = """
+        # 获取可用的工具和agents列表
+        available_tools = list(self.task_manager.tools.keys())
+        available_agents = list(self.task_manager.managed_agents.keys())
+        
+        # 构建资源清单
+        resources_info = f"""
+### 📦 可用资源清单
+
+**系统配置**:
+- 最大并发任务数 (max_workers): {self.task_manager.max_workers}
+  - 这是系统同时执行的最大任务数量
+  - 超过此数量的任务会排队等待
+  - 建议根据此数量合理规划并行任务
+
+**可用的 Tools (使用 task_type="tool")**:
+{chr(10).join(f'  - {tool}' for tool in available_tools) if available_tools else '  (无)'}
+
+**可用的 Managed Agents (使用 task_type="managed_agent")**:
+{chr(10).join(f'  - {agent}' for agent in available_agents) if available_agents else '  (无)'}
+
+⚠️ **重要**: 
+- 使用 submit_task 时，必须正确指定 task_type：
+  - 对于上面列出的 Tools，使用 task_type="tool"
+  - 对于上面列出的 Managed Agents，使用 task_type="managed_agent"
+- 错误的 task_type 会导致任务提交失败
+"""
+        
+        async_guidance = f"""
 
 ## 异步任务管理指南
 
 你现在具备了强大的异步任务管理能力。以下是使用指南：
 
+{resources_info}
+
 ### 🚀 异步工作流程
 1. **任务分析**: 分析复杂任务，识别可以并行执行的子任务
 2. **任务分发**: 使用submit_task工具将子任务提交到异步队列
-3. **智能等待**: 使用wait_for_tasks或sleep工具等待任务完成
+3. **智能等待**: 使用wait_for_tasks等待任务完成（无超时限制，会等待所有任务完成）
 4. **结果收集**: 使用get_task_results批量获取结果
 5. **结果整合**: 将异步结果整合为最终答案
 
 ### 🛠️ 可用的异步工具
-- `submit_task`: 提交任务到异步队列（支持tool和managed_agent）- 直接返回任务ID
-- `wait_for_tasks`: 智能等待指定任务完成
-- `sleep`: 简单休眠等待
+- `submit_task`: 提交任务到异步队列 - 直接返回任务ID
+  - 参数: task_type (必须是 "tool" 或 "managed_agent")
+  - 参数: target_name (工具名或agent名，见上方资源清单)
+  - 参数: arguments (传递给工具/agent的参数)
+- `wait_for_tasks`: 智能等待指定任务完成（会一直等到所有任务完成）
 - `get_task_results`: 批量获取任务结果（直接返回字典）
 - `check_task`: 检查单个任务状态
 - `list_tasks`: 列出所有任务
 
 ### 💡 最佳实践
-1. **识别并行机会**: 寻找可以同时执行的独立任务
-2. **合理等待**: 提交任务后，使用wait_for_tasks而不是盲目sleep
-3. **错误处理**: 检查任务是否失败，并有备用方案
-4. **批量操作**: 使用get_task_results批量获取结果，提高效率
-5. **进度监控**: 定期检查长时间运行任务的状态
+1. **合理规划并发**: 系统最大支持 {self.task_manager.max_workers} 个并发任务
+   - 一次提交大约 {self.task_manager.max_workers} 个任务最合适
+   - 提交更多任务会排队，但不会失败
+   - 对于大批量任务，考虑分批提交
+2. **正确使用 task_type**: 根据上方资源清单选择正确的 task_type
+3. **识别并行机会**: 寻找可以同时执行的独立任务
+4. **等待任务完成**: 提交任务后，使用 wait_for_tasks 等待（会等到所有任务完成）
+5. **批量操作**: 使用 get_task_results 批量获取结果，提高效率
+6. **错误处理**: 检查任务是否失败，并有备用方案
 
 ### 📝 示例异步模式
 
 ```python
-# 1. 并行数据处理（推荐方式）
-task1_id = submit_task("tool", "data_processor", {"dataset": "A"})
-task2_id = submit_task("tool", "data_processor", {"dataset": "B"})
-wait_for_tasks([task1_id, task2_id], max_wait_time=30)
+# 1. 并行使用工具（task_type="tool"）- 适合快速任务
+# 当前系统支持 {self.task_manager.max_workers} 个并发任务
+task1_id = submit_task("tool", "data_processor", {{"dataset": "A"}})
+task2_id = submit_task("tool", "data_processor", {{"dataset": "B"}})
+task3_id = submit_task("tool", "data_processor", {{"dataset": "C"}})
+wait_for_tasks([task1_id, task2_id, task3_id])  # 会等待所有任务完成
 
 # 使用get_task_results直接获取字典结果
-results_dict = get_task_results([task1_id, task2_id])
+results_dict = get_task_results([task1_id, task2_id, task3_id])
 result_a = results_dict[task1_id]
 result_b = results_dict[task2_id]
+result_c = results_dict[task3_id]
 
-# 2. 流水线处理
-step1_id = submit_task("tool", "preprocess", {"data": input_data})
-wait_for_tasks([step1_id])
-step1_results = get_task_results([step1_id])
-step2_id = submit_task("tool", "analyze", {"data": step1_results[step1_id]})
+# 2. 并行使用代理（task_type="managed_agent"）
+agent_task = submit_task("managed_agent", "filesystem_agent", {{
+    "task": "分析系统日志",
+    "additional_args": {{}}
+}})
+wait_for_tasks([agent_task])
+agent_results = get_task_results([agent_task])
 
-# 3. 混合任务类型
-tool_task = submit_task("tool", "calculation", {...})
-agent_task = submit_task("managed_agent", "analyst", {...})
+# 3. 混合使用工具和代理
+tool_task = submit_task("tool", "calculation", {{"x": 10}})
+agent_task = submit_task("managed_agent", "analyst_agent", {{"task": "分析数据"}})
 wait_for_tasks([tool_task, agent_task])
 final_results = get_task_results([tool_task, agent_task])
-```
 
-### ⚠️ 重要提醒
-- 总是在提交任务后适当等待，不要立即检查结果
-- 使用wait_for_tasks比简单sleep更智能
-- 长时间任务要设置合理的超时时间
-- 处理任务失败的情况，提供备用方案
+# 4. 大批量任务分批处理（如果任务数 > max_workers）
+all_datasets = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]
+batch_size = {self.task_manager.max_workers}  # 根据并发数分批
+
+for i in range(0, len(all_datasets), batch_size):
+    batch = all_datasets[i:i+batch_size]
+    task_ids = [submit_task("tool", "process", {{"data": d}}) for d in batch]
+    wait_for_tasks(task_ids)
+    results = get_task_results(task_ids)
+    # 处理这批结果...
+```
 
 现在，你可以智能地分解复杂任务，并行执行，大大提高处理效率！
 """

@@ -260,3 +260,67 @@ results = get_task_results([sales_task, market_task, ops_task])
 ```
 
 这就是智能异步Agent的强大之处 - **Agent成为了任务协调者**，自动处理复杂的并行任务流程！
+
+## 🔍 OpenTelemetry 追踪支持
+
+### 问题：异步任务中 Trace 断裂
+
+在多线程环境中执行异步任务时，OpenTelemetry 的 trace context 默认不会自动传递到新线程，导致：
+- Phoenix/其他监控平台中只能看到部分 trace
+- 主 agent 和异步任务的 trace 不连贯
+- 难以完整追踪整个任务流程
+
+### 解决方案：自动 Context 传递
+
+系统已自动集成 OpenTelemetry context 传递：
+
+1. **提交任务时捕获 context**：
+   - 在 `submit_task` 时自动捕获当前的 OpenTelemetry context
+   - 将 context 存储在 `TaskInfo` 中
+
+2. **执行任务时恢复 context**：
+   - 在 `_execute_task` 中恢复父任务的 context
+   - 异步任务的 trace 会正确关联到主任务
+   - 执行完成后自动清理 context
+
+3. **完全透明**：
+   - 无需修改现有代码
+   - 自动检测 OpenTelemetry 是否可用
+   - 即使没有安装 OpenTelemetry 也能正常工作
+
+### 使用示例
+
+```python
+# 启用监控（在创建 agent 之前）
+from phoenix.otel import register
+from openinference.instrumentation.smolagents import SmolagentsInstrumentor
+
+register(
+   project_name=project_name,
+   endpoint="http://localhost:6006/v1/traces",
+   auto_instrument=True,
+   set_global_tracer_provider=False
+)
+SmolagentsInstrumentor().instrument()
+
+# 正常使用异步 agent
+async_agent = create_async_agent(tools=tools, model=model)
+result = async_agent.run_with_async_guidance("你的任务")
+
+# 在 Phoenix UI 中查看完整、连贯的 trace
+# http://localhost:6006
+```
+
+### 效果
+
+✅ **完整的 Trace 链**：从主 agent 到所有异步子任务
+✅ **正确的父子关系**：清晰展示任务依赖和调用关系
+✅ **连贯的时间线**：准确显示并行执行的时序关系
+✅ **完整的 Span 信息**：LLM 调用、工具执行、错误信息全部可见
+
+### 技术细节
+
+- 使用 `opentelemetry.context` 进行 context 传递
+- 在线程边界显式传递和恢复 context
+- 使用 `attach/detach` 确保 context 正确隔离
+- 失败时有 fallback，不影响任务执行
