@@ -17,12 +17,7 @@ from smolagents import (
     GitHubTools,
     GoalDriftCallback,
     PlanningStep,
-    ListDirectoryTool,
-    ReadFileTool,
-    WriteFileTool,
-    EditFileTool,
-    FileSearchTool,
-    FileContentSearchTool,
+    FilesystemTools,
     ShellTools,
 )
 from smolagents.web_tools import WebTools
@@ -83,23 +78,16 @@ class POCValidationAgent:
     def _create_agent(self):
         """创建专门用于POC验证的智能agent"""
         
-        # 基础工具
+        # web工具
         web_tools = WebTools(model=self.model, text_limit=100000, search_engine=self.search_engine)
         
-        # 尝试添加GitHub工具
         tools = web_tools.tools
         
-        filesystem_tools = [
-            ListDirectoryTool(),      # 列出目录内容
-            ReadFileTool(),           # 读取文件
-            WriteFileTool(),          # 写入文件
-            EditFileTool(),           # 编辑文件
-            FileSearchTool(),         # 搜索文件
-            FileContentSearchTool(),  # 搜索文件内容
-        ]
-        tools.extend(filesystem_tools)
+        # 文件系统工具
+        filesystem_tools = FilesystemTools()
+        tools.extend(filesystem_tools.tools)
 
-        # Shell工具 - 使用新的封装类
+        # Shell工具
         shell_tools = ShellTools(
             default_page_size=20480,    # 20KB分页大小，超过此大小自动分页
             include_system_info=True    # 包含系统信息工具

@@ -725,6 +725,50 @@ class FileContentSearchTool(Tool):
         return results
 
 
+class FilesystemTools:
+    """
+    文件系统工具集合管理器
+    
+    提供一套完整的文件系统操作工具，包括文件读写、目录浏览、文件搜索等功能。
+    """
+    
+    def __init__(self):
+        """
+        初始化文件系统工具集合
+        """
+        self._tools = None
+    
+    @property
+    def tools(self):
+        """获取所有文件系统工具的列表"""
+        if self._tools is None:
+            self._tools = self._create_tools()
+        return self._tools
+    
+    def _create_tools(self):
+        """创建所有文件系统工具"""
+        return [
+            ListDirectoryTool(),      # 列出目录内容
+            ReadFileTool(),           # 读取文件
+            WriteFileTool(),          # 写入文件
+            EditFileTool(),           # 编辑文件
+            FileSearchTool(),         # 搜索文件
+            FileContentSearchTool(),  # 搜索文件内容
+        ]
+    
+    def __len__(self) -> int:
+        """返回工具数量"""
+        return len(self.tools)
+    
+    def __iter__(self):
+        """支持迭代"""
+        return iter(self.tools)
+    
+    def __getitem__(self, index):
+        """支持索引访问"""
+        return self.tools[index]
+
+
 __all__ = [
     "ListDirectoryTool",
     "ReadFileTool", 
@@ -732,4 +776,5 @@ __all__ = [
     "EditFileTool",
     "FileSearchTool",
     "FileContentSearchTool",
+    "FilesystemTools",
 ]

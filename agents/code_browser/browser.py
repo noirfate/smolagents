@@ -6,12 +6,7 @@ from smolagents import (
     MemoryCompressedCodeAgent,
     GoalDriftCallback,
     PlanningStep,
-    ListDirectoryTool,
-    ReadFileTool,
-    WriteFileTool,
-    EditFileTool,
-    FileSearchTool,
-    FileContentSearchTool,
+    FilesystemTools,
     ShellTools,
 )
 from smolagents.web_tools import WebTools
@@ -147,15 +142,8 @@ class CodeBrowserAgent:
         tools.extend(web_tools.tools)
 
         # 文件系统工具 - 用于浏览和分析代码
-        filesystem_tools = [
-            ListDirectoryTool(),      # 列出目录内容
-            ReadFileTool(),           # 读取文件
-            WriteFileTool(),          # 写入文件
-            EditFileTool(),           # 编辑文件
-            FileSearchTool(),         # 搜索文件
-            FileContentSearchTool(),  # 搜索文件内容
-        ]
-        tools.extend(filesystem_tools)
+        filesystem_tools = FilesystemTools()
+        tools.extend(filesystem_tools.tools)
 
         # Shell工具 - 用于执行CodeQL命令
         shell_tools = ShellTools(

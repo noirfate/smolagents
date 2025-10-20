@@ -14,12 +14,7 @@ from dotenv import load_dotenv
 from smolagents import (
     CodeAgent,
     LiteLLMModel,
-    ListDirectoryTool,
-    ReadFileTool,
-    WriteFileTool,
-    EditFileTool,
-    FileSearchTool,
-    FileContentSearchTool,
+    FilesystemTools,
 )
 
 load_dotenv(override=True)
@@ -38,19 +33,12 @@ def create_filesystem_agent(model_id="gpt-4o", max_steps=15):
     model = LiteLLMModel(**model_params)
     
     # 初始化文件系统工具
-    filesystem_tools = [
-        ListDirectoryTool(),      # 列出目录内容
-        ReadFileTool(),           # 读取文件
-        WriteFileTool(),          # 写入文件
-        EditFileTool(),           # 编辑文件
-        FileSearchTool(),         # 搜索文件
-        FileContentSearchTool(),  # 搜索文件内容
-    ]
+    filesystem_tools = FilesystemTools()
     
     # 创建代理
     agent = CodeAgent(
         model=model,
-        tools=filesystem_tools,
+        tools=filesystem_tools.tools,
         max_steps=max_steps,
         verbosity_level=2,
         additional_authorized_imports=["*"],  # 允许导入额外的库

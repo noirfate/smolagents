@@ -6,21 +6,10 @@ FilesystemAgent - 文件系统操作专家
 
 from smolagents import (
     CodeAgent,
-    Model
+    Model,
+    FilesystemTools,
+    ShellTools,
 )
-
-# 导入文件系统工具
-from smolagents.filesystem_tools import (
-    ListDirectoryTool,
-    ReadFileTool,
-    WriteFileTool,
-    EditFileTool,
-    FileSearchTool,
-    FileContentSearchTool,
-)
-
-# 导入Shell工具
-from smolagents import ShellTools
 
 
 def create_filesystem_agent(model: Model, max_steps: int = 30) -> CodeAgent:
@@ -36,26 +25,18 @@ def create_filesystem_agent(model: Model, max_steps: int = 30) -> CodeAgent:
     """
     
     # 组合所有文件系统和Shell工具
-    filesystem_tools = [
-        # 文件系统操作工具
-        ListDirectoryTool(),
-        ReadFileTool(),
-        WriteFileTool(),
-        EditFileTool(),
-        FileSearchTool(),
-        FileContentSearchTool(),
-    ]
+    filesystem_tools = FilesystemTools()
+    tools = list(filesystem_tools.tools)
     
-    # Shell工具 - 使用新的封装类
     shell_tools = ShellTools(
         default_page_size=20480,    # 20KB分页大小，超过此大小自动分页
         include_system_info=True    # 包含系统信息工具
     )
-    filesystem_tools.extend(shell_tools.tools)
+    tools.extend(shell_tools.tools)
     
     filesystem_agent = CodeAgent(
         model=model,
-        tools=filesystem_tools,
+        tools=tools,
         max_steps=max_steps,
         additional_authorized_imports=["*"],
         verbosity_level=2,
