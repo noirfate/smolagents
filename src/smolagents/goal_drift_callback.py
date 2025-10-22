@@ -87,11 +87,14 @@ CORRECTED_PLAN: [Only if STATUS is DRIFTED - provide the corrected plan here]
         # 解析结构化响应
         status, evidence, corrected_plan = self._parse_structured_response(content)
         
-        if corrected_plan:
+        # 只有在检测到偏离且提供了修正计划时才替换
+        if status == "DRIFTED" and corrected_plan:
             print("🚨 检测到目标偏离，正在自动纠正...")
-            print(f"📋 原计划: {planning_step.plan}")
-            print(f"🔄 新计划: {corrected_plan}")
+            print(f"📋 原计划: {planning_step.plan[:200]}..." if len(planning_step.plan) > 200 else f"📋 原计划: {planning_step.plan}")
+            print(f"🔄 新计划: {corrected_plan[:200]}..." if len(corrected_plan) > 200 else f"🔄 新计划: {corrected_plan}")
             planning_step.plan = corrected_plan
+        elif status == "ALIGNED":
+            print("✅ 计划与目标对齐，无需调整")
     
     def _parse_structured_response(self, response_content: str) -> tuple[str, str, Optional[str]]:
         """解析结构化响应，返回(status, evidence, corrected_plan)"""

@@ -3,10 +3,12 @@
 通过继承方式最小侵入地扩展现有Agent
 """
 
-from typing import List
+from typing import Generator, List
+
 from .agents import ToolCallingAgent, CodeAgent
 from .models import ChatMessage
 from .memory_manager import MemoryManager
+from .memory import PlanningStep
 from .tools import Tool
 
 __all__ = [
@@ -18,14 +20,14 @@ __all__ = [
 
 
 class HistorySearchTool(Tool):
-    """历史步骤搜索工具 - 根据关键词搜索包含该关键词的所有步骤"""
+    """历史步骤搜索工具 - 根据关键词搜索你之前执行的动作"""
     
     name = "search_history_steps"
-    description = "根据关键词搜索会话历史中包含该关键词的所有步骤。返回匹配的步骤编号列表和第一个匹配步骤的完整内容。"
+    description = "根据关键词搜索你之前执行的所有动作步骤（包括工具调用、代码执行等）。返回匹配的步骤编号列表和第一个匹配步骤的完整内容。当你需要回忆之前做过什么、使用过哪些工具、执行过什么代码时，可以使用此工具。"
     inputs = {
         "keyword": {
             "type": "string", 
-            "description": "要搜索的关键词，将在所有历史执行步骤的内容中进行匹配。"
+            "description": "要搜索的关键词，可以是工具名称、变量名、函数名、文件名等任何在执行过程中出现的内容。"
         }
     }
     output_type = "string"
@@ -43,7 +45,7 @@ class HistorySearchTool(Tool):
             result = self.memory_manager.search_steps_by_keyword(keyword)
             
             if result["total_matches"] == 0:
-                return f"在会话历史中未找到包含关键词 '{keyword}' 的步骤。"
+                return f"在会话历史中未找到包含关键词 '{keyword}' 的执行步骤。"
             
             # 构建返回结果
             response_lines = [
@@ -71,14 +73,14 @@ class HistorySearchTool(Tool):
             return f"搜索历史步骤时发生错误: {str(e)}"
 
 class StepContentTool(Tool):
-    """步骤内容获取工具 - 根据步骤编号获取特定步骤的完整内容"""
+    """步骤内容获取工具 - 查看你在某个步骤中做了什么"""
     
     name = "get_step_content"
-    description = "根据步骤编号获取特定步骤的完整内容。通常与 search_history_steps 工具配合使用，先搜索到相关步骤编号，再获取具体内容。"
+    description = "根据步骤编号获取你在该步骤中执行的完整内容，包括调用的工具、执行的代码、输出结果等。通常与 search_history_steps 工具配合使用：先搜索到相关步骤编号，再用此工具查看详细内容。"
     inputs = {
         "step_number": {
             "type": "integer", 
-            "description": "要获取内容的步骤编号（从1开始计数）。可以通过 search_history_steps 工具获得相关步骤的编号。"
+            "description": "要查看的执行步骤编号。可以通过 search_history_steps 工具获得相关步骤的编号。"
         }
     }
     output_type = "string"
@@ -105,15 +107,28 @@ class StepContentTool(Tool):
             return "\n".join(response_lines)
             
         except Exception as e:
-            return f"获取步骤内容时发生错误: {str(e)}"
+            return f"获取步骤内容时发生错误: {str(e)}\n提示：请确保使用的步骤编号来自 search_history_steps 工具的搜索结果。"
 
 
 class MemoryCompressedToolCallingAgent(ToolCallingAgent):
     """集成记忆压缩功能的ToolCallingAgent"""
     
-    def __init__(self, *args, memory_dir=".", **kwargs):
+    def __init__(self, *args, memory_dir=".", aggressive_compression=False, **kwargs):
+        """初始化 MemoryCompressedToolCallingAgent
+        
+        Args:
+            memory_dir: 记忆文件保存目录
+            aggressive_compression: 是否使用激进压缩策略（默认 False）
+                - True: 只保留当前 plan 及后续 action，更节省 token
+                - False: 保留最近一次完整的 {action, plan} 周期
+            **kwargs: 其他参数传递给父类
+        """
         super().__init__(*args, **kwargs)
-        self.memory_manager = MemoryManager(agent=self, memory_dir=memory_dir)
+        self.memory_manager = MemoryManager(
+            agent=self, 
+            memory_dir=memory_dir,
+            aggressive_compression=aggressive_compression
+        )
         
         # 创建历史记录查看工具
         self.history_search_tool = HistorySearchTool(self.memory_manager)
@@ -144,11 +159,28 @@ class MemoryCompressedToolCallingAgent(ToolCallingAgent):
 
 
 class MemoryCompressedCodeAgent(CodeAgent):
-    """集成记忆压缩功能的CodeAgent"""
+    """集成记忆压缩功能的CodeAgent
     
-    def __init__(self, *args, memory_dir=".", **kwargs):
+    包含历史代码追踪功能：在每次 planning 时自动在 plan 文本中追加历史代码执行摘要
+    """
+    
+    def __init__(self, *args, memory_dir=".", aggressive_compression=True, **kwargs):
+        """初始化 MemoryCompressedCodeAgent
+        
+        Args:
+            memory_dir: 记忆文件保存目录
+            aggressive_compression: 是否使用激进压缩策略（默认 True）
+                - True: 只保留当前 plan 及后续 action，更节省 token
+                       因为 plan 中已包含历史代码摘要，模型可通过工具查看详细历史
+                - False: 保留最近一次完整的 {action, plan} 周期，更保守
+            **kwargs: 其他参数传递给父类
+        """
         super().__init__(*args, **kwargs)
-        self.memory_manager = MemoryManager(agent=self, memory_dir=memory_dir)
+        self.memory_manager = MemoryManager(
+            agent=self, 
+            memory_dir=memory_dir,
+            aggressive_compression=aggressive_compression
+        )
         
         # 创建历史记录查看工具
         self.history_search_tool = HistorySearchTool(self.memory_manager)
@@ -176,3 +208,51 @@ class MemoryCompressedCodeAgent(CodeAgent):
     def write_memory_to_messages(self, summary_mode: bool = False) -> List[ChatMessage]:
         """覆盖原始方法，添加记忆压缩功能"""
         return self.memory_manager.write_memory_to_messages_with_compression(summary_mode)
+    
+    def _generate_planning_step(
+        self, task, is_first_step: bool, step: int
+    ) -> Generator:
+        """重写 planning 步骤生成方法，在 plan 文本中追加历史代码摘要章节
+        
+        只在激进压缩策略时追加代码摘要，因为：
+        - 激进策略会压缩更多历史，需要在plan中提醒模型可用的变量
+        - 保守策略保留了更多上下文，已有足够的历史信息
+        """
+        # 如果不是激进压缩策略，直接使用父类方法
+        if not self.memory_manager.aggressive_compression:
+            yield from super()._generate_planning_step(task, is_first_step, step)
+            return
+        
+        # 激进压缩策略：在Plan中追加历史代码摘要
+        for event in super()._generate_planning_step(task, is_first_step, step):
+            # 保留所有中间事件（如流式输出）
+            if isinstance(event, PlanningStep):
+                # 如果不是第一次 planning，追加历史代码摘要到 plan 文本
+                if not is_first_step:
+                    code_summary = self.memory_manager.get_historical_code_summary()
+                    if code_summary:
+                        event.plan += f"\n\n{code_summary}"
+                        
+                        # 使用更好的显示格式来输出历史代码摘要
+                        from .monitoring import LogLevel
+                        from rich.panel import Panel
+                        from rich.text import Text
+                        
+                        # 创建显示内容
+                        display_content = Text()
+                        display_content.append("📜 ", style="bold cyan")
+                        display_content.append("历史代码执行摘要已添加到规划中\n", style="bold cyan")
+                        display_content.append("模型现在可以看到之前执行的代码和可复用的变量", style="dim")
+                        
+                        # 用Panel包装，使其更突出
+                        panel = Panel(
+                            display_content,
+                            title="[bold yellow]💡 CodeAgent激进压缩[/bold yellow]",
+                            border_style="cyan",
+                            padding=(0, 1)
+                        )
+                        
+                        self.logger.log(panel, level=LogLevel.INFO)
+            
+            # Yield 所有事件（包括修改后的 PlanningStep）
+            yield event
