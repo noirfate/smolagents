@@ -27,6 +27,11 @@ try:
 except ImportError:
     SELENIUM_AVAILABLE = False
 
+try:
+    from firecrawl import FirecrawlApp
+    FIRECRAWL_AVAILABLE = True
+except ImportError:
+    FIRECRAWL_AVAILABLE = False
 
 class BrowserManager:
     """管理Selenium WebDriver浏览器实例，避免重复启动"""
@@ -388,11 +393,41 @@ class SimpleTextBrowser:
 
         self._set_page_content(content)
 
+    def firecrawler_get(self, url: str) -> bool:
+        if not FIRECRAWL_AVAILABLE:
+            return False
+
+        try:
+            api_key = os.getenv("FIRECRAWL_API_KEY")
+            api_url = os.getenv("FIRECRAWL_API_URL")
+
+            if not api_key:
+                return False
+
+            if api_url:
+                app = FirecrawlApp(api_key=api_key, api_url=api_url)
+            else:
+                app = FirecrawlApp(api_key=api_key)
+        
+            doc = app.scrape(url, formats=['markdown'], wait_for=5000)
+            self.page_title = doc.metadata_dict['title']
+            self._set_page_content(doc.markdown)
+            return True
+        except Exception as e:
+            print(e)
+
+        return False
+
     def _fetch_page(self, url: str) -> None:
+        if self.firecrawler_get(url):
+            return
+
         download_path = ""
         try:
             if url.startswith("file://"):
-                download_path = os.path.normcase(os.path.normpath(unquote(url[7:])))
+                # Use urllib to properly parse file:// URIs (cross-platform compatible)
+                from urllib.request import url2pathname
+                download_path = url2pathname(urlparse(url).path)
                 res = self._mdconvert.convert_local(download_path)
                 self.page_title = res.title
                 self._set_page_content(res.text_content)
@@ -507,7 +542,7 @@ class SimpleTextBrowser:
 
 class SearchInformationTool(Tool):
     name = "web_search"
-    description = "Perform a web search query (think a google search) and returns the search results."
+    description = "Perform a web search query (think a google search) and returns the search results. Do not use filter_year parameter unless necessary, directly use `web_search(query)` in most scenarios."
     inputs = {"query": {"type": "string", "description": "The web search query to perform."}}
     inputs["filter_year"] = {
         "type": "string",
@@ -528,7 +563,7 @@ class SearchInformationTool(Tool):
 
 class VisitTool(Tool):
     name = "visit_page"
-    description = "Visit a webpage at a given URL and return its text. Given a url to a YouTube video, this returns the transcript."
+    description = "Visit a webpage at a given URL and return its text. Given a url to a YouTube video, this returns the transcript. Native support for paging, you can print without any string interception, like `result=visit_page(url);print(result)`."
     inputs = {"url": {"type": "string", "description": "The relative or absolute url of the webpage to visit."}}
     output_type = "string"
 

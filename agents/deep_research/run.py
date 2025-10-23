@@ -7,7 +7,6 @@ from filesystem_agent import create_filesystem_agent
 
 from smolagents import (
     LiteLLMModel,
-    MemoryCompressedToolCallingAgent, 
     MemoryCompressedCodeAgent,
     GitHubTools,
     GoalDriftCallback,
@@ -64,14 +63,13 @@ def parse_args():
     return parser.parse_args()
 
 
-custom_role_conversions = {"tool-call": "assistant", "tool-response": "user"}
-
+#custom_role_conversions = {"tool-call": "assistant", "tool-response": "user"}
 
 def create_agent(model_id="gpt-5-chat", max_steps=50):
     model_params = {
         "model_id": f"litellm_proxy/{model_id}",
-        "custom_role_conversions": custom_role_conversions,
-        "max_completion_tokens": 8192,
+        #"custom_role_conversions": custom_role_conversions,
+        #"max_completion_tokens": 8192,
         "api_key": os.getenv("API_KEY"),
         "base_url": os.getenv("BASE_URL")
     }
@@ -98,8 +96,12 @@ def create_agent(model_id="gpt-5-chat", max_steps=50):
     Your request must be a real sentence, not a google search! Like "Find me this information (...)" rather than a few keywords.
     """,
     )
-    text_webbrowser_agent.prompt_templates["managed_agent"]["task"] += """You can navigate to .txt online files.
-    If a non-html page is in another format, especially .pdf or a Youtube video, use tool 'inspect_file_as_text' to inspect it.
+    text_webbrowser_agent.prompt_templates["managed_agent"]["task"] += """\nHint:\n
+    - You can navigate to .txt online files. 
+    - visit_page tool native support for paging, you can print without any string interception, like `result=visit_page(url);print(result)`.
+    - do not use filter_years parameter for web_search toolunless necessary.
+    - If a non-html page is in another format, especially .pdf or a Youtube video, use tool 'inspect_file_as_text' to inspect it.
+
     Additionally, if after some searching you find out that you need more information to answer the question, you can use `final_answer` with your request for clarification as argument to request for more information."""
 
     # 创建GitHub MCP agent（如果有GitHub工具）
@@ -147,13 +149,14 @@ def create_agent(model_id="gpt-5-chat", max_steps=50):
     # 创建目标偏离检测回调
     goal_drift_detector = GoalDriftCallback()
     
-    manager_agent = MemoryCompressedToolCallingAgent(
+    manager_agent = MemoryCompressedCodeAgent(
         model=model,
         tools=[visualizer, web_tools.get_text_inspector()],
         max_steps=max_steps,
         verbosity_level=2,
         planning_interval=4,
         managed_agents=managed_agents,
+        name="deep_research_agent",
         step_callbacks={
             PlanningStep: goal_drift_detector  # 在每个规划步骤后检测目标偏离
         },
