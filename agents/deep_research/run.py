@@ -51,6 +51,13 @@ def parse_args():
         help="设置Agent的最大执行步数，默认为50"
     )
     parser.add_argument(
+        "--search-engine",
+        type=str,
+        default="google",
+        choices=["google", "duckduckgo"],
+        help="选择搜索引擎：google (需要SerpAPI密钥) 或 duckduckgo (免费但结果较少)，默认为google"
+    )
+    parser.add_argument(
         "--enable-monitoring", 
         action="store_true", 
         help="启用Phoenix监控，查看LLM输入输出 (需要安装phoenix和openinference相关包)"
@@ -65,7 +72,7 @@ def parse_args():
 
 #custom_role_conversions = {"tool-call": "assistant", "tool-response": "user"}
 
-def create_agent(model_id="gpt-5-chat", max_steps=50):
+def create_agent(model_id="gpt-5-chat", max_steps=50, search_engine="google"):
     model_params = {
         "model_id": f"litellm_proxy/{model_id}",
         #"custom_role_conversions": custom_role_conversions,
@@ -77,7 +84,7 @@ def create_agent(model_id="gpt-5-chat", max_steps=50):
     model = LiteLLMModel(**model_params)
     
     # 创建Web工具集合
-    web_tools = WebTools(model=model, text_limit=100000, search_engine="google")
+    web_tools = WebTools(model=model, text_limit=100000, search_engine=search_engine)
     
     GITHUB_TOOLS = get_github_tools()
 
@@ -87,8 +94,9 @@ def create_agent(model_id="gpt-5-chat", max_steps=50):
         max_steps=max_steps,
         additional_authorized_imports=["*"],
         verbosity_level=2,
-        planning_interval=4,
+        planning_interval=6,
         name="search_agent",
+        aggressive_compression=False,
         description="""A team member that will search the internet to answer your question.
     Ask him for all your questions that require browsing the web.
     Provide him as much context as possible, in particular if you need to search on a specific timeframe!
@@ -114,7 +122,7 @@ def create_agent(model_id="gpt-5-chat", max_steps=50):
             max_steps=max_steps,
             additional_authorized_imports=["*"],
             verbosity_level=2,
-            planning_interval=4,
+            planning_interval=6,
             name="github_agent",
             description="""A specialized team member for GitHub operations and code repository analysis.
         Ask him for all your questions related to GitHub and code repositories.
@@ -160,6 +168,7 @@ def create_agent(model_id="gpt-5-chat", max_steps=50):
         step_callbacks={
             PlanningStep: goal_drift_detector  # 在每个规划步骤后检测目标偏离
         },
+        aggressive_compression=False,
     )
 
     return manager_agent
@@ -193,9 +202,18 @@ def main():
         print("   可以创建issues、搜索代码、分析仓库等")
         print("   创建GitHub Personal Access Token: https://github.com/settings/tokens")
     
+    print(f"🔍 使用搜索引擎: {args.search_engine}")
+    if args.search_engine == "google":
+        serpapi_key = os.getenv("SERPAPI_KEY")
+        if not serpapi_key:
+            print("⚠️ 警告：使用Google搜索需要设置SERPAPI_KEY环境变量")
+            print("   获取密钥: https://serpapi.com/")
+            print("   或者使用 --search-engine duckduckgo 切换到免费搜索引擎")
+    
     agent = create_agent(
         model_id=args.model_id, 
-        max_steps=args.max_steps
+        max_steps=args.max_steps,
+        search_engine=args.search_engine
     )
 
     # 首次问题

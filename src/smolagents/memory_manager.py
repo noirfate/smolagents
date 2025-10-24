@@ -51,6 +51,15 @@ class MemoryManager:
     
     def get_memory_content(self):
         return self.memory_content
+    
+    def reset(self):
+        """重置压缩状态
+        
+        当Agent的memory被reset时（如managed agents被多次调用），
+        需要同步重置MemoryManager的压缩状态，避免旧的摘要污染新任务
+        """
+        self._historical_summaries = []
+        self._last_compressed_index = 0
 
     def get_planning_step_indices(self, memory_steps: List[MemoryStep]) -> List[int]:
         """一次遍历获取所有PlanningStep的位置"""

@@ -33,6 +33,12 @@ try:
 except ImportError:
     FIRECRAWL_AVAILABLE = False
 
+try:
+    from crawl4ai import AsyncWebCrawler, CrawlerRunConfig
+    CRAWL4AI_AVAILABLE = True
+except ImportError:
+    CRAWL4AI_AVAILABLE = False
+
 class BrowserManager:
     """管理Selenium WebDriver浏览器实例，避免重复启动"""
     
@@ -445,13 +451,63 @@ class SimpleTextBrowser:
 
                 # Text or HTML
                 if "text/" in content_type.lower():
-                    # 如果selenium可用，则使用浏览器获取更好的文本内容
-                    if SELENIUM_AVAILABLE:
-                        title, text_content = _browser_manager.get_page_text(url)
-                        self.page_title = title
-                        self._set_page_content(text_content)
-                    else:
-                        # 使用原有的方法处理
+                    success = False
+                    
+                    # 优先尝试 crawl4ai（如果可用）
+                    if CRAWL4AI_AVAILABLE:
+                        try:
+                            import asyncio
+                            
+                            async def _fetch_page_crawl4ai(url: str) -> tuple[str, str] | None:
+                                """使用crawl4ai异步获取页面内容
+                                
+                                Returns:
+                                    (title, markdown_content) if success, None if failed
+                                """
+                                try:
+                                    async with AsyncWebCrawler() as crawler:
+                                        config = CrawlerRunConfig(
+                                            js_code=[
+                                                "window.scrollTo(0, document.body.scrollHeight/2);",
+                                                "window.scrollTo(0, document.body.scrollHeight);",
+                                                "window.scrollTo(0, 0);",
+                                            ],
+                                            delay_before_return_html=2.5,
+                                            page_timeout=10000
+                                        )
+                                        result = await crawler.arun(url=url, config=config)
+                                        if result.success:
+                                            title = result.metadata.get('title', 'Untitled Page')
+                                            content = result.markdown
+                                            return title, content
+                                        else:
+                                            print(f"⚠️ Crawl4AI failed: {result.error_message}")
+                                            return None
+                                except Exception as e:
+                                    print(f"⚠️ Crawl4AI error: {e}")
+                                    return None
+                            
+                            crawl_result = asyncio.run(_fetch_page_crawl4ai(url))
+                            if crawl_result:
+                                title, markdown_content = crawl_result
+                                self.page_title = title
+                                self._set_page_content(markdown_content)
+                                success = True
+                        except Exception as e:
+                            print(f"⚠️ Crawl4AI execution error: {e}")
+                    
+                    # 如果 crawl4ai 失败，尝试 selenium
+                    if not success and SELENIUM_AVAILABLE:
+                        try:
+                            title, text_content = _browser_manager.get_page_text(url)
+                            self.page_title = title
+                            self._set_page_content(text_content)
+                            success = True
+                        except Exception as e:
+                            print(f"⚠️ Selenium failed: {e}")
+                    
+                    # 如果前面都失败，使用原始方法
+                    if not success:
                         res = self._mdconvert.convert_response(response)
                         self.page_title = res.title
                         self._set_page_content(res.text_content)

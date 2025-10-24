@@ -147,6 +147,14 @@ class TaskManager:
         if hasattr(agent, 'max_tool_threads'):
             params['max_tool_threads'] = agent.max_tool_threads
         
+        # MemoryCompressedCodeAgent/MemoryCompressedToolCallingAgent 特定参数
+        if hasattr(agent, 'memory_manager'):
+            # 提取记忆压缩相关参数
+            if hasattr(agent.memory_manager, 'memory_dir'):
+                params['memory_dir'] = str(agent.memory_manager.memory_dir)
+            if hasattr(agent.memory_manager, 'aggressive_compression'):
+                params['aggressive_compression'] = agent.memory_manager.aggressive_compression
+        
         return params
     
     def _create_agent_copy(self, agent_name: str):

@@ -156,6 +156,13 @@ class MemoryCompressedToolCallingAgent(ToolCallingAgent):
     def write_memory_to_messages(self, summary_mode: bool = False) -> List[ChatMessage]:
         """覆盖原始方法，添加记忆压缩功能"""
         return self.memory_manager.write_memory_to_messages_with_compression(summary_mode)
+    
+    def run(self, task, reset=True, **kwargs):
+        """重写run方法，在reset时同步重置MemoryManager状态"""
+        # 在调用父类run之前，如果需要reset，先重置memory_manager
+        if reset:
+            self.memory_manager.reset()
+        return super().run(task, reset=reset, **kwargs)
 
 
 class MemoryCompressedCodeAgent(CodeAgent):
@@ -208,6 +215,13 @@ class MemoryCompressedCodeAgent(CodeAgent):
     def write_memory_to_messages(self, summary_mode: bool = False) -> List[ChatMessage]:
         """覆盖原始方法，添加记忆压缩功能"""
         return self.memory_manager.write_memory_to_messages_with_compression(summary_mode)
+    
+    def run(self, task, reset=True, **kwargs):
+        """重写run方法，在reset时同步重置MemoryManager状态"""
+        # 在调用父类run之前，如果需要reset，先重置memory_manager
+        if reset:
+            self.memory_manager.reset()
+        return super().run(task, reset=reset, **kwargs)
     
     def _generate_planning_step(
         self, task, is_first_step: bool, step: int
