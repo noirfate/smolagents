@@ -12,6 +12,7 @@ from smolagents import (
     GoalDriftCallback,
     PlanningStep,
     WebTools,
+    OpenAIServerModel,
 )
 
 load_dotenv(override=True)
@@ -73,16 +74,15 @@ def parse_args():
 #custom_role_conversions = {"tool-call": "assistant", "tool-response": "user"}
 
 def create_agent(model_id="gpt-5-chat", max_steps=50, search_engine="google"):
+    # 创建模型
     model_params = {
-        "model_id": f"litellm_proxy/{model_id}",
-        #"custom_role_conversions": custom_role_conversions,
+        "model_id": f"{model_id}",
         #"max_completion_tokens": 8192,
         "api_key": os.getenv("API_KEY"),
-        "base_url": os.getenv("BASE_URL")
+        "api_base": os.getenv("BASE_URL")
     }
-    
-    model = LiteLLMModel(**model_params)
-    
+    model = OpenAIServerModel(**model_params)
+
     # 创建Web工具集合
     web_tools = WebTools(model=model, text_limit=100000, search_engine=search_engine)
     
@@ -204,9 +204,9 @@ def main():
     
     print(f"🔍 使用搜索引擎: {args.search_engine}")
     if args.search_engine == "google":
-        serpapi_key = os.getenv("SERPAPI_KEY")
+        serpapi_key = os.getenv("SERPAPI_API_KEY")
         if not serpapi_key:
-            print("⚠️ 警告：使用Google搜索需要设置SERPAPI_KEY环境变量")
+            print("⚠️ 警告：使用Google搜索需要设置SERPAPI_API_KEY环境变量")
             print("   获取密钥: https://serpapi.com/")
             print("   或者使用 --search-engine duckduckgo 切换到免费搜索引擎")
     
