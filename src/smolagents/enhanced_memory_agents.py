@@ -162,7 +162,14 @@ class MemoryCompressedToolCallingAgent(ToolCallingAgent):
         # 在调用父类run之前，如果需要reset，先重置memory_manager
         if reset:
             self.memory_manager.reset()
-        return super().run(task, reset=reset, **kwargs)
+        
+        try:
+            result = super().run(task, reset=reset, **kwargs)
+        finally:
+            # 执行完毕后，保存完整的会话历史（包含final_answer）
+            self.memory_manager.save_history_to_file(self.memory.steps)
+        
+        return result
 
 
 class MemoryCompressedCodeAgent(CodeAgent):
@@ -221,7 +228,14 @@ class MemoryCompressedCodeAgent(CodeAgent):
         # 在调用父类run之前，如果需要reset，先重置memory_manager
         if reset:
             self.memory_manager.reset()
-        return super().run(task, reset=reset, **kwargs)
+        
+        try:
+            result = super().run(task, reset=reset, **kwargs)
+        finally:
+            # 执行完毕后，保存完整的会话历史（包含final_answer）
+            self.memory_manager.save_history_to_file(self.memory.steps)
+        
+        return result
     
     def _generate_planning_step(
         self, task, is_first_step: bool, step: int

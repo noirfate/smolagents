@@ -455,46 +455,47 @@ class SimpleTextBrowser:
                     
                     # 优先尝试 crawl4ai（如果可用）
                     if CRAWL4AI_AVAILABLE:
-                        try:
-                            import asyncio
+                        import asyncio
+                        
+                        async def _fetch_page_crawl4ai(url: str) -> tuple[str, str] | None:
+                            """使用crawl4ai异步获取页面内容
                             
-                            async def _fetch_page_crawl4ai(url: str) -> tuple[str, str] | None:
-                                """使用crawl4ai异步获取页面内容
-                                
-                                Returns:
-                                    (title, markdown_content) if success, None if failed
-                                """
-                                try:
-                                    async with AsyncWebCrawler() as crawler:
-                                        config = CrawlerRunConfig(
-                                            js_code=[
-                                                "window.scrollTo(0, document.body.scrollHeight/2);",
-                                                "window.scrollTo(0, document.body.scrollHeight);",
-                                                "window.scrollTo(0, 0);",
-                                            ],
-                                            delay_before_return_html=2.5,
-                                            page_timeout=10000
-                                        )
-                                        result = await crawler.arun(url=url, config=config)
-                                        if result.success:
-                                            title = result.metadata.get('title', 'Untitled Page')
-                                            content = result.markdown
-                                            return title, content
-                                        else:
-                                            print(f"⚠️ Crawl4AI failed: {result.error_message}")
-                                            return None
-                                except Exception as e:
-                                    print(f"⚠️ Crawl4AI error: {e}")
-                                    return None
-                            
-                            crawl_result = asyncio.run(_fetch_page_crawl4ai(url))
-                            if crawl_result:
-                                title, markdown_content = crawl_result
-                                self.page_title = title
-                                self._set_page_content(markdown_content)
-                                success = True
-                        except Exception as e:
-                            print(f"⚠️ Crawl4AI execution error: {e}")
+                            Returns:
+                                (title, markdown_content) if success, None if failed
+                            """
+                            try:
+                                async with AsyncWebCrawler() as crawler:
+                                    config = CrawlerRunConfig(
+                                        js_code=[
+                                            "window.scrollTo(0, document.body.scrollHeight/2);",
+                                            "window.scrollTo(0, document.body.scrollHeight);",
+                                            "window.scrollTo(0, 0);",
+                                        ],
+                                        delay_before_return_html=2.5,
+                                        page_timeout=10000
+                                    )
+                                    result = await crawler.arun(url=url, config=config)
+                                    if result.success:
+                                        title = result.metadata.get('title', 'Untitled Page')
+                                        content = result.markdown
+                                        return title, content
+                                    else:
+                                        return None
+                            except Exception as e:
+                                return None
+                        
+                        max_retries = 2
+                        for attempt in range(max_retries):
+                            try:
+                                crawl_result = asyncio.run(_fetch_page_crawl4ai(url))
+                                if crawl_result:
+                                    title, markdown_content = crawl_result
+                                    self.page_title = title
+                                    self._set_page_content(markdown_content)
+                                    success = True
+                                    break
+                            except Exception as e:
+                                pass
                     
                     # 如果 crawl4ai 失败，尝试 selenium
                     if not success and SELENIUM_AVAILABLE:

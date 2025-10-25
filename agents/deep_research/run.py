@@ -86,7 +86,8 @@ def create_agent(model_id="gpt-5-chat", max_steps=50, search_engine="google"):
     # 创建Web工具集合
     web_tools = WebTools(model=model, text_limit=100000, search_engine=search_engine)
     
-    GITHUB_TOOLS = get_github_tools()
+    #GITHUB_TOOLS = get_github_tools()
+    GITHUB_TOOLS = None
 
     text_webbrowser_agent = MemoryCompressedCodeAgent(
         model=model,
@@ -193,15 +194,6 @@ def main():
     else:
         print("📝 监控功能已禁用，如需启用请添加 --enable-monitoring 参数")
 
-    # 检查GitHub集成配置
-    github_token = os.getenv("GITHUB_TOKEN")
-    if github_token:
-        print("🔗 检测到GITHUB_TOKEN，将集成GitHub MCP server功能")
-    else:
-        print("💡 提示：设置GITHUB_TOKEN环境变量可启用GitHub集成功能")
-        print("   可以创建issues、搜索代码、分析仓库等")
-        print("   创建GitHub Personal Access Token: https://github.com/settings/tokens")
-    
     print(f"🔍 使用搜索引擎: {args.search_engine}")
     if args.search_engine == "google":
         serpapi_key = os.getenv("SERPAPI_API_KEY")
