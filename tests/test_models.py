@@ -724,6 +724,17 @@ def test_remove_content_after_stop_sequences():
     assert removed_content == "Hello"
 
 
+def test_remove_content_after_stop_sequences_handles_none():
+    # Test with None stop sequence
+    content = "Hello world!"
+    removed_content = remove_content_after_stop_sequences(content, None)
+    assert removed_content == content
+
+    # Test with None content
+    removed_content = remove_content_after_stop_sequences(None, ["<code>"])
+    assert removed_content is None
+
+
 @pytest.mark.parametrize(
     "convert_images_to_image_urls, expected_clean_message",
     [
