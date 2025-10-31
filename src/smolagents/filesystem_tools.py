@@ -18,6 +18,7 @@
 import os
 import glob
 import fnmatch
+import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -42,18 +43,33 @@ class ListDirectoryTool(Tool):
             "type": "string", 
             "description": "可选的文件名过滤模式（如 '*.py' 或 'test_*'）。如果为空，列出所有文件。",
             "nullable": True
+        },
+        "working_directory": {
+            "type": "string",
+            "description": "工作目录，用于解析相对路径。如果为空，则使用当前工作目录。",
+            "nullable": True
         }
     }
     output_type = "string"
     
-    def forward(self, directory_path: str, pattern: Optional[str] = None) -> str:
+    def forward(self, directory_path: str, pattern: Optional[str] = None, working_directory: Optional[str] = None) -> str:
         try:
             # 如果目录路径为空，使用当前目录
             if not directory_path:
                 directory_path = "."
             
+            # 解析工作目录
+            if working_directory:
+                base_dir = Path(working_directory)
+                if not base_dir.exists() or not base_dir.is_dir():
+                    return f"错误：工作目录 '{working_directory}' 不存在或不是目录。"
+            else:
+                base_dir = Path(os.getcwd())
+            
             # 检查目录是否存在
             path = Path(directory_path)
+            if not path.is_absolute():
+                path = base_dir / path
             if not path.exists():
                 return f"错误：目录 '{directory_path}' 不存在。"
             
@@ -138,11 +154,16 @@ class ReadFileTool(Tool):
             "type": "integer", 
             "description": "开始读取的行号（从1开始），默认为1。",
             "nullable": True
+        },
+        "working_directory": {
+            "type": "string",
+            "description": "工作目录，用于解析相对路径。如果为空，则使用当前工作目录。",
+            "nullable": True
         }
     }
     output_type = "string"
     
-    def forward(self, file_path: str, encoding: Optional[str] = None, max_lines: Optional[int] = None, start_line: Optional[int] = None) -> str:
+    def forward(self, file_path: str, encoding: Optional[str] = None, max_lines: Optional[int] = None, start_line: Optional[int] = None, working_directory: Optional[str] = None) -> str:
         try:
             if not file_path:
                 return "错误：文件路径不能为空。"
@@ -157,8 +178,18 @@ class ReadFileTool(Tool):
             elif start_line < 1:
                 return "错误：开始行号必须大于等于1。"
             
+            # 解析工作目录
+            if working_directory:
+                base_dir = Path(working_directory)
+                if not base_dir.exists() or not base_dir.is_dir():
+                    return f"错误：工作目录 '{working_directory}' 不存在或不是目录。"
+            else:
+                base_dir = Path(os.getcwd())
+            
             # 检查文件是否存在
             path = Path(file_path)
+            if not path.is_absolute():
+                path = base_dir / path
             if not path.exists():
                 return f"错误：文件 '{file_path}' 不存在。"
             
@@ -244,11 +275,16 @@ class WriteFileTool(Tool):
             "type": "string",
             "description": "文件编码格式，默认为 'utf-8'。",
             "nullable": True
+        },
+        "working_directory": {
+            "type": "string",
+            "description": "工作目录，用于解析相对路径。如果为空，则使用当前工作目录。",
+            "nullable": True
         }
     }
     output_type = "string"
     
-    def forward(self, file_path: str, content: str, encoding: Optional[str] = None) -> str:
+    def forward(self, file_path: str, content: str, encoding: Optional[str] = None, working_directory: Optional[str] = None) -> str:
         try:
             if not file_path:
                 return "错误：文件路径不能为空。"
@@ -257,7 +293,17 @@ class WriteFileTool(Tool):
             if encoding is None:
                 encoding = "utf-8"
             
+            # 解析工作目录
+            if working_directory:
+                base_dir = Path(working_directory)
+                if not base_dir.exists() or not base_dir.is_dir():
+                    return f"错误：工作目录 '{working_directory}' 不存在或不是目录。"
+            else:
+                base_dir = Path(os.getcwd())
+            
             path = Path(file_path)
+            if not path.is_absolute():
+                path = base_dir / path
             
             # 创建目录（如果不存在）
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -326,12 +372,17 @@ class EditFileTool(Tool):
             "type": "string",
             "description": "文件编码格式，默认为 'utf-8'。",
             "nullable": True
+        },
+        "working_directory": {
+            "type": "string",
+            "description": "工作目录，用于解析相对路径。如果为空，则使用当前工作目录。",
+            "nullable": True
         }
     }
     output_type = "string"
     
     def forward(self, file_path: str, old_content: str, new_content: str, 
-                expected_replacements: Optional[int] = None, encoding: Optional[str] = None) -> str:
+                expected_replacements: Optional[int] = None, encoding: Optional[str] = None, working_directory: Optional[str] = None) -> str:
         try:
             if not file_path:
                 return "错误：文件路径不能为空。"
@@ -342,7 +393,17 @@ class EditFileTool(Tool):
             if expected_replacements is None:
                 expected_replacements = 1
             
+            # 解析工作目录
+            if working_directory:
+                base_dir = Path(working_directory)
+                if not base_dir.exists() or not base_dir.is_dir():
+                    return f"错误：工作目录 '{working_directory}' 不存在或不是目录。"
+            else:
+                base_dir = Path(os.getcwd())
+            
             path = Path(file_path)
+            if not path.is_absolute():
+                path = base_dir / path
             
             # 处理创建新文件的情况
             if old_content == "":
@@ -503,11 +564,16 @@ class FileSearchTool(Tool):
             "type": "boolean",
             "description": "是否递归搜索子目录，默认为 True。",
             "nullable": True
+        },
+        "working_directory": {
+            "type": "string",
+            "description": "工作目录，用于解析相对路径。如果为空，则使用当前工作目录。",
+            "nullable": True
         }
     }
     output_type = "string"
     
-    def forward(self, directory_path: str, pattern: str, recursive: Optional[bool] = None) -> str:
+    def forward(self, directory_path: str, pattern: str, recursive: Optional[bool] = None, working_directory: Optional[str] = None) -> str:
         try:
             if not pattern:
                 return "错误：搜索模式不能为空。"
@@ -520,8 +586,18 @@ class FileSearchTool(Tool):
             if recursive is None:
                 recursive = True
             
+            # 解析工作目录
+            if working_directory:
+                base_dir = Path(working_directory)
+                if not base_dir.exists() or not base_dir.is_dir():
+                    return f"错误：工作目录 '{working_directory}' 不存在或不是目录。"
+            else:
+                base_dir = Path(os.getcwd())
+            
             # 检查目录是否存在
             path = Path(directory_path)
+            if not path.is_absolute():
+                path = base_dir / path
             if not path.exists():
                 return f"错误：目录 '{directory_path}' 不存在。"
             
@@ -582,13 +658,13 @@ class FileSearchTool(Tool):
 
 class FileContentSearchTool(Tool):
     """
-    在文件或目录中搜索包含指定内容的文件，支持通配符匹配，不支持递归搜索子目录。
+    在文件或目录中搜索包含指定内容的文件，支持通配符匹配和递归搜索子目录。
     
-    此工具可以在指定文件或目录中的文件内容中搜索指定的文本模式，支持使用通配符进行模式匹配。
+    此工具可以在指定文件或目录中的文件内容中搜索指定的文本模式，支持使用通配符进行模式匹配，并可递归搜索所有子目录。
     """
     
     name = "search_file_content"
-    description = "在文件内容中搜索指定的文本模式，支持通配符匹配和在单个文件或目录中的多个文件中搜索。"
+    description = "在文件内容中搜索指定的文本模式，支持通配符匹配、递归搜索子目录。"
     inputs = {
         "search_path": {
             "type": "string",
@@ -607,11 +683,22 @@ class FileContentSearchTool(Tool):
             "type": "boolean",
             "description": "是否区分大小写，默认为 False。",
             "nullable": True
+        },
+        "recursive": {
+            "type": "boolean",
+            "description": "是否递归搜索子目录，默认为 True。",
+            "nullable": True
+        },
+        "working_directory": {
+            "type": "string",
+            "description": "工作目录，用于解析相对路径。如果为空，则使用当前工作目录。",
+            "nullable": True
         }
     }
     output_type = "string"
     
-    def forward(self, search_path: str, search_text: str, file_pattern: Optional[str] = None, case_sensitive: Optional[bool] = None) -> str:
+    def forward(self, search_path: str, search_text: str, file_pattern: Optional[str] = None, 
+                case_sensitive: Optional[bool] = None, recursive: Optional[bool] = None, working_directory: Optional[str] = None) -> str:
         try:
             if not search_path:
                 return "错误：搜索路径不能为空。"
@@ -619,14 +706,26 @@ class FileContentSearchTool(Tool):
             if not search_text:
                 return "错误：搜索文本不能为空。"
             
-            # 默认不区分大小写
+            # 默认值设置
             if case_sensitive is None:
                 case_sensitive = False
+            if recursive is None:
+                recursive = True
             
             # 自动检测是否包含通配符
             has_wildcards = '*' in search_text or '?' in search_text
             
+            # 解析工作目录
+            if working_directory:
+                base_dir = Path(working_directory)
+                if not base_dir.exists() or not base_dir.is_dir():
+                    return f"错误：工作目录 '{working_directory}' 不存在或不是目录。"
+            else:
+                base_dir = Path(os.getcwd())
+            
             path = Path(search_path)
+            if not path.is_absolute():
+                path = base_dir / path
             if not path.exists():
                 return f"错误：路径 '{search_path}' 不存在。"
             
@@ -642,9 +741,16 @@ class FileContentSearchTool(Tool):
                 if file_pattern is None:
                     file_pattern = "*"
                 
-                # 获取匹配的文件
-                search_pattern = str(path / "**" / file_pattern)
-                files = glob.glob(search_pattern, recursive=True)
+                # 根据 recursive 参数决定搜索模式
+                if recursive:
+                    # 递归搜索所有子目录
+                    search_pattern = str(path / "**" / file_pattern)
+                    files = glob.glob(search_pattern, recursive=True)
+                else:
+                    # 仅搜索当前目录
+                    search_pattern = str(path / file_pattern)
+                    files = glob.glob(search_pattern, recursive=False)
+                
                 files = [f for f in files if Path(f).is_file()]
                 
                 for file_path in files:
@@ -654,15 +760,16 @@ class FileContentSearchTool(Tool):
             
             search_type = "区分大小写" if case_sensitive else "不区分大小写"
             wildcard_info = "，通配符模式" if has_wildcards else ""
+            recursive_info = "，递归搜索" if recursive else "，非递归搜索"
 
             if not results:
                 if path.is_file():
                     return f"在文件 '{search_path}' 中没有找到 '{search_text}'（{search_type}{wildcard_info}）。"
                 else:
                     pattern_info = f"，文件模式：{file_pattern}" if file_pattern and file_pattern != "*" else ""
-                    return f"在目录 '{search_path}' 中没有找到 '{search_text}'（{search_type}{wildcard_info}{pattern_info}）。"
+                    return f"在目录 '{search_path}' 中没有找到 '{search_text}'（{search_type}{wildcard_info}{pattern_info}{recursive_info}）。"
             
-            result_text = f"搜索 '{search_text}'（{search_type}{wildcard_info}）的结果:\n\n"
+            result_text = f"搜索 '{search_text}'（{search_type}{wildcard_info}{recursive_info}）的结果:\n\n"
             
             current_file = None
             for file_path, line_num, line_content in results:
@@ -725,6 +832,183 @@ class FileContentSearchTool(Tool):
         return results
 
 
+class RipgrepSearchTool(Tool):
+    """
+    使用 ripgrep 在文件中快速搜索文本内容。
+    
+    ripgrep 是一个非常快速的搜索工具，比传统的 grep 和文件内容搜索快得多。
+    支持正则表达式、大小写敏感/不敏感搜索、文件类型过滤等高级功能。
+    """
+    
+    name = "ripgrep_search"
+    description = "使用 ripgrep 快速搜索文件内容。支持正则表达式、文件类型过滤等高级功能。比普通搜索快得多，适合大型代码库。"
+    inputs = {
+        "search_path": {
+            "type": "string",
+            "description": "要搜索的文件或目录路径，不能为空。"
+        },
+        "pattern": {
+            "type": "string",
+            "description": "要搜索的文本模式，不能为空，默认正则表达式，设置use_regex=False进行字符串搜索。"
+        },
+        "case_sensitive": {
+            "type": "boolean",
+            "description": "是否区分大小写，默认为 False（不区分大小写）。",
+            "nullable": True
+        },
+        "file_pattern": {
+            "type": "string",
+            "description": "文件名过滤模式（如 '*.py', '*.{java,go}'）。支持 glob 语法。",
+            "nullable": True
+        },
+        "use_regex": {
+            "type": "boolean",
+            "description": "是否将 pattern 作为正则表达式，默认为 True。设为 False 则进行字面字符串搜索。",
+            "nullable": True
+        },
+        "max_count": {
+            "type": "integer",
+            "description": "每个文件的最大匹配数，默认为 20。设为 0 则不限制。",
+            "nullable": True
+        },
+        "context_lines": {
+            "type": "integer",
+            "description": "显示匹配行前后的上下文行数，默认为 0（不显示上下文）。",
+            "nullable": True
+        },
+        "timeout": {
+            "type": "integer",
+            "description": "命令执行超时时间（秒），默认为 30 秒。防止搜索时间过长。",
+            "nullable": True
+        },
+        "working_directory": {
+            "type": "string",
+            "description": "工作目录，用于解析相对路径。如果为空，则使用当前工作目录。",
+            "nullable": True
+        }
+    }
+    output_type = "string"
+    
+    def forward(self, search_path: str, pattern: str, case_sensitive: Optional[bool] = None,
+                file_pattern: Optional[str] = None, use_regex: Optional[bool] = None,
+                max_count: Optional[int] = None, context_lines: Optional[int] = None,
+                timeout: Optional[int] = None, working_directory: Optional[str] = None) -> str:
+        try:
+            # 检查 ripgrep 是否可用
+            if not self._check_ripgrep_available():
+                return "ripgrep 未安装，无法使用此工具。\n建议：请使用 search_file_content 工具进行文件内容搜索。"
+            
+            # 设置默认值
+            if case_sensitive is None:
+                case_sensitive = False
+            if use_regex is None:
+                use_regex = True
+            if max_count is None:
+                max_count = 20
+            if context_lines is None:
+                context_lines = 0
+            if timeout is None:
+                timeout = 30
+            
+            # 解析工作目录
+            if working_directory:
+                base_dir = Path(working_directory)
+                if not base_dir.exists() or not base_dir.is_dir():
+                    return f"错误：工作目录 '{working_directory}' 不存在或不是目录。"
+            else:
+                base_dir = Path(os.getcwd())
+            
+            # 检查路径是否存在
+            path = Path(search_path)
+            if not path.is_absolute():
+                path = base_dir / path
+            if not path.exists():
+                return f"错误：路径 '{search_path}' 不存在。"
+            
+            # 构建 ripgrep 命令
+            cmd = ["rg"]
+            
+            # 显示行号
+            cmd.append("-n")
+            
+            # 显示文件名
+            cmd.append("-H")
+            
+            # 不使用颜色
+            cmd.append("--color=never")
+            
+            # 大小写敏感性
+            if not case_sensitive:
+                cmd.append("-i")
+            
+            # 字面字符串 vs 正则表达式
+            if not use_regex:
+                cmd.append("-F")
+            
+            # 上下文行数
+            if context_lines > 0:
+                cmd.extend(["-C", str(context_lines)])
+            
+            # 文件过滤
+            if file_pattern:
+                cmd.extend(["--glob", file_pattern])
+            
+            # 限制每个文件的最大匹配数（0 表示不限制）
+            if max_count > 0:
+                cmd.extend(["--max-count", str(max_count)])
+            
+            # 添加搜索模式
+            cmd.extend(["-e", pattern])
+            
+            # 添加搜索路径
+            cmd.append(str(path))
+            
+            # 执行命令
+            try:
+                # 使用 utf-8 编码和 replace 错误处理，避免 Windows 上的编码问题
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    encoding='utf-8',
+                    errors='replace',  # 替换无法解码的字符，避免 UnicodeDecodeError
+                    timeout=timeout
+                )
+                
+                # ripgrep 返回码：0=找到匹配，1=未找到匹配，2=错误
+                if result.returncode == 2:
+                    return f"ripgrep 执行错误：{result.stderr.strip()}"
+                
+                if result.returncode == 1 or not result.stdout.strip():
+                    return f"在 '{search_path}' 中没有找到匹配项。"
+                
+                # 直接返回原始输出，只添加简单的头部信息
+                header = f"ripgrep 搜索结果:\n"
+                header += "=" * 50 + "\n"
+                
+                return header + result.stdout
+                
+            except subprocess.TimeoutExpired:
+                return f"错误：搜索超时（{timeout}秒）。请缩小搜索范围、使用更具体的搜索模式或增加 timeout 参数。"
+            except Exception as exec_error:
+                return f"执行 ripgrep 时发生错误：{str(exec_error)}"
+            
+        except Exception as e:
+            return f"ripgrep 搜索时发生错误：{str(e)}"
+    
+    def _check_ripgrep_available(self) -> bool:
+        """检查 ripgrep 是否可用"""
+        try:
+            result = subprocess.run(
+                ["rg", "--version"],
+                capture_output=True,
+                timeout=5
+            )
+            return result.returncode == 0
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
+    
+
 class FilesystemTools:
     """
     文件系统工具集合管理器
@@ -754,6 +1038,7 @@ class FilesystemTools:
             EditFileTool(),           # 编辑文件
             FileSearchTool(),         # 搜索文件
             FileContentSearchTool(),  # 搜索文件内容
+            RipgrepSearchTool(),      # 使用 ripgrep 快速搜索
         ]
     
     def __len__(self) -> int:
@@ -776,5 +1061,6 @@ __all__ = [
     "EditFileTool",
     "FileSearchTool",
     "FileContentSearchTool",
+    "RipgrepSearchTool",
     "FilesystemTools",
 ]

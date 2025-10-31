@@ -176,6 +176,7 @@ class CodeBrowserAgent:
                 PlanningStep: GoalDriftCallback()
             },
             name="code_browser_agent",
+            aggressive_compression=False,
             description=self._get_agent_description(),
         )
     
@@ -528,6 +529,7 @@ select
             raise ValueError("Agent尚未初始化，请先调用initialize()方法")
         
         first = True
+        should_reset = True  # 第一次运行时需要reset
         print("\n🗣 进入对话模式。提示：输入 'exit' 或 'quit' 退出，会话内输入 '/reset' 可清空历史记忆。\n")
 
         while True:
@@ -546,8 +548,8 @@ select
                 break
 
             if lower_input.startswith("/reset"):
-                # 清空记忆但保留系统提示
-                self._agent.memory.reset()
+                # 设置标志，下一次运行时执行reset
+                should_reset = True
                 print("♻️ 已清空会话历史记忆。")
                 continue
 
@@ -555,8 +557,10 @@ select
                 first = False
                 user_input = self.build_analysis_task(user_input)
 
-            # 继续在同一会话中运行，保留上下文
-            follow_up_answer = self._agent.run(user_input, reset=False, max_steps=self.max_steps)
+            # 根据should_reset标志决定是否重置
+            follow_up_answer = self._agent.run(user_input, reset=should_reset, max_steps=self.max_steps)
+            # reset后，将标志恢复为False，继续保持上下文
+            should_reset = False
             print(f"Agent: {follow_up_answer}")
     
     def run_single_task(self, user_input: str, reset: bool = True) -> str:

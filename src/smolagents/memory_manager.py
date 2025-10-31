@@ -37,13 +37,12 @@ class MemoryManager:
         self.agent = agent  # 保存agent对象引用
         self.aggressive_compression = aggressive_compression  # 压缩策略选项
         
-        # 会话管理
-        self.memory_dir = Path(memory_dir)
+        self.memory_dir = Path(memory_dir).resolve()
         self.memory_dir.mkdir(exist_ok=True)
         
         # 文件路径
-        agent_name = getattr(agent, 'name', 'unnamed_agent')
-        self.memory_file = self.memory_dir / f"{agent_name}_memory_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+        self.agent_name = getattr(agent, 'name', 'unnamed_agent')
+        self.memory_file = self.memory_dir / f"{self.agent_name}_memory_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
         self.memory_content = ""
     
     def get_memory_file(self):
@@ -60,6 +59,8 @@ class MemoryManager:
         """
         self._historical_summaries = []
         self._last_compressed_index = 0
+        self.memory_file = self.memory_dir / f"{self.agent_name}_memory_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+        self.memory_content = ""
 
     def get_planning_step_indices(self, memory_steps: List[MemoryStep]) -> List[int]:
         """一次遍历获取所有PlanningStep的位置"""
