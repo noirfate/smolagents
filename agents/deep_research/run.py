@@ -108,7 +108,7 @@ def create_agent(model_id="gpt-5-chat", max_steps=50, search_engine="google"):
     text_webbrowser_agent.prompt_templates["managed_agent"]["task"] += """\nHint:\n
     - You can navigate to .txt online files. 
     - visit_page tool native support for paging, you can print without any string interception, like `result=visit_page(url);print(result)`.
-    - do not use filter_years parameter for web_search toolunless necessary.
+    - do not use filter_years parameter for web_search tool unless necessary.
     - If a non-html page is in another format, especially .pdf or a Youtube video, use tool 'inspect_file_as_text' to inspect it.
 
     Additionally, if after some searching you find out that you need more information to answer the question, you can use `final_answer` with your request for clarification as argument to request for more information."""
