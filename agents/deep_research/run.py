@@ -42,7 +42,12 @@ def get_github_tools():
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "question", type=str, help="for example: 'How many studio albums did Mercedes Sosa release before 2007?'"
+        "question", type=str, nargs="?", default=None,
+        help="for example: 'How many studio albums did Mercedes Sosa release before 2007?'"
+    )
+    parser.add_argument(
+        "--question-file", "-f", type=str, default=None,
+        help="从文件中读取问题内容，适合较长的问题。如果指定此参数，将优先使用文件中的内容"
     )
     parser.add_argument("--model-id", type=str, default="gpt-5-chat")
     parser.add_argument(
@@ -178,6 +183,32 @@ def create_agent(model_id="gpt-5-chat", max_steps=50, search_engine="google"):
 def main():
     args = parse_args()
 
+    # 确定问题来源：优先使用文件，其次使用命令行参数
+    question = None
+    if args.question_file:
+        try:
+            with open(args.question_file, 'r', encoding='utf-8') as f:
+                question = f.read().strip()
+            print(f"📖 从文件读取问题: {args.question_file}")
+        except FileNotFoundError:
+            print(f"❌ 错误：找不到文件 '{args.question_file}'")
+            return
+        except Exception as e:
+            print(f"❌ 读取文件时出错: {e}")
+            return
+    elif args.question:
+        question = args.question
+    else:
+        print("❌ 错误：请提供问题（通过命令行参数或 --question-file）")
+        print("使用示例：")
+        print("  python run.py 'your question here'")
+        print("  python run.py --question-file question.txt")
+        return
+    
+    if not question:
+        print("❌ 错误：问题内容为空")
+        return
+
     # 根据参数决定是否启用监控插桩
     if args.enable_monitoring:
         try:
@@ -209,7 +240,7 @@ def main():
     )
 
     # 首次问题
-    answer = agent.run(args.question)
+    answer = agent.run(question)
     print(f"Got this answer: {answer}")
 
     # 多轮对话模式：在同一Agent实例上继续追问（reset=False 保留上下文记忆）
